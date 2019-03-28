@@ -17,7 +17,7 @@ class BaseLayer:
     def __init__(self):
         # TODO: do we need share?
         # self.is_share = False
-        self.layer_name = '/'.join(tf.get_variable_scope.name.split('/')[1:])
+        self.layer_name = '/'.join(tf.get_variable_scope().name.split('/')[1:])
         self.weight_tensors = list()
         self.layer_input = None
         self.layer_output = None

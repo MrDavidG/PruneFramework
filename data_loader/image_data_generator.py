@@ -25,11 +25,12 @@ class ImageDataGenerator(DataGenerator):
     def parse_image_train(file_name, label, dataset_name, means_tensor, stds_tensor, n_classes):
         image_string = tf.read_file(file_name)
 
-        image = tf.cast(tf.image.decode_jpep(image_string), dtype=tf.float32) / 255.
+        image = tf.cast(tf.image.decode_jpeg(image_string), dtype=tf.float32) / 255.
         if dataset_name in ['gtsrb', 'omniglot', 'svhn', 'daimlerpedcls']:
             image = tf.image.resize_image_with_crop_or_pad(image, 72, 72)
         else:
-            image = tf.random_crop(image, size=[64, 64, 3])
+            # image = tf.random_crop(image, size=[64, 64, 3])
+            image = tf.random_crop(image, size=[28, 28, 1])
             # flip the image with the probability of 0.5
             image = tf.image.random_flip_left_right(image)
         image = (image - means_tensor) / stds_tensor
@@ -44,7 +45,7 @@ class ImageDataGenerator(DataGenerator):
         if dataset_name in ['gtsrb', 'omniglot', 'svhn', 'daimlerpedcls']:
             image = tf.image.resize_image_with_crop_or_pad(image, 72, 72)
         else:
-            image = tf.image.resize_image_with_crop_or_pad(image, 64, 64)
+            image = tf.image.resize_image_with_crop_or_pad(image, 28, 28)
         image = (image - means_tensor) / stds_tensor
 
         label = tf.one_hot(indices=label, depth=n_classes)
@@ -70,8 +71,11 @@ class ImageDataGenerator(DataGenerator):
         labels_train = []
         for i in range(len(classes_path_list_train)):
             classes_path = classes_path_list_train[i]
+            # the path of the images under this label directory
             tmp = [classes_path + x for x in sorted(os.listdir(classes_path))]
+            # the file path of all the training images
             filepath_list_train += tmp
+            # the labels of all the training images (the labels are encoded by the order in the list)
             labels_train += (np.ones(len(tmp)) * i).tolist()
 
         filepath_list_train = np.array(filepath_list_train)

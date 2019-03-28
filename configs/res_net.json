@@ -8,6 +8,6 @@
   "n_group": 3,
   "n_blocks_per_group": 4,
   "width": 32,
-  "dataset_path": "/srv/node/sdc1/image_data/decathlon/",
+  "dataset_path": "../datasets/",
   "method_prune": "lbos"
 }

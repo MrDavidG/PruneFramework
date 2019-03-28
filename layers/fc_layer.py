@@ -21,14 +21,6 @@ class FullConnectedLayer(BaseLayer):
         self.create(x, weight_dict, regularizer_fc)
 
     def create(self, x, weight_dict=None, regularizer_fc=None):
-        """
-
-        :param x: input
-        :param weight_dict:
-        :param regularizer_fc:
-        :return: output before activation
-        """
-
         self.layer_input = x
 
         weights, biases = self.get_fc_param(weight_dict, regularizer_fc)
@@ -38,12 +30,13 @@ class FullConnectedLayer(BaseLayer):
         self.layer_output = fc
         return self.layer_output
 
-    @abstractmethod
+    @staticmethod
     def get_fc_param(weight_dict, regularizer_fc):
         scope_name = tf.get_variable_scope().name
 
-        weights = tf.get_variable(name='weights', initializer=weight_dict[scope_name + '/weights'],
+        weights = tf.get_variable(name="weights", initializer=weight_dict[scope_name + '/weights'],
                                   regularizer=regularizer_fc)
-        biases = tf.get_variable(name='biases', initializer=weight_dict[scope_name + 'biases'],
+        biases = tf.get_variable(name="biases", initializer=weight_dict[scope_name + '/biases'],
                                  regularizer=regularizer_fc)
+
         return weights, biases

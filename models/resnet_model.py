@@ -12,7 +12,7 @@ Description.
 from models.base_model import BaseModel
 from data_loader.image_data_generator import ImageDataGenerator
 from utils.config import process_config
-from utils.time_stamp import print_with_time_stamp as print
+# from utils.time_stamp import print_with_time_stamp as print
 from layers.conv_layer import ConvLayer
 from layers.bn_layer import BatchNormalizeLayer
 from layers.fc_layer import FullConnectedLayer
@@ -394,6 +394,15 @@ class ResNet(BaseModel):
 
     def prune(self):
         # TODO
+        # self.layers
+        #
+        # for layer in self.layers:
+        #     layer.output
+        #     hessian =
+        #     hessian_inverse =
+
+            # caculate the optimal parameter change and the sensitivity for each parameter at layer l
+
         pass
 
     def retrain(self):
@@ -408,9 +417,10 @@ if __name__ == '__main__':
     gpu_config = tf.ConfigProto()
     gpu_config.gpu_options.allow_growth = True
 
-    for task_name in ['daimlerpedcls', 'omniglot']:
+    for task_name in ['mnist']:
         print('training on task {:s}'.format(task_name))
         tf.reset_default_graph()
+        # session for training
         session = tf.Session(config=gpu_config)
         training = tf.placeholder(dtype=tf.bool, name='training')
         # regularizer of the conv layer
