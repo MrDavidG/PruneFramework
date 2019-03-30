@@ -1,0 +1,11 @@
+{
+  "exp_name": "test",
+  "batch_size": 64,
+  "cpu_cores": 8,
+  "skip_step": 100,
+  "learning_rate": 0.001,
+  "dropout": false,
+  "dataset_path": "../datasets/",
+  "weights_folder": "...",
+  "method_prune": "lbos/info_bottle"
+}

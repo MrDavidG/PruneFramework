@@ -26,16 +26,17 @@ class ImageDataGenerator(DataGenerator):
         image_string = tf.read_file(file_name)
 
         image = tf.cast(tf.image.decode_jpeg(image_string), dtype=tf.float32) / 255.
-        if dataset_name in ['gtsrb', 'omniglot', 'svhn', 'daimlerpedcls']:
-            image = tf.image.resize_image_with_crop_or_pad(image, 72, 72)
+        if dataset_name in ['gtsrb', 'omniglot', 'svhn', 'daimlerpedcls', 'mnist']:
+            # image = tf.image.resize_image_with_crop_or_pad(image, 72, 72)
+            image = tf.image.resize_image_with_crop_or_pad(image, 224, 224)
         else:
             # image = tf.random_crop(image, size=[64, 64, 3])
-            image = tf.random_crop(image, size=[28, 28, 1])
+            image = tf.random_crop(image, size=[224, 224, 1])
             # flip the image with the probability of 0.5
             image = tf.image.random_flip_left_right(image)
         image = (image - means_tensor) / stds_tensor
 
-        label = tf.one_hot(indices=label, depth=n_classes)
+        label = tf.one_hot(indices=label, depth=1000)
         return image, label
 
     @staticmethod
@@ -45,10 +46,12 @@ class ImageDataGenerator(DataGenerator):
         if dataset_name in ['gtsrb', 'omniglot', 'svhn', 'daimlerpedcls']:
             image = tf.image.resize_image_with_crop_or_pad(image, 72, 72)
         else:
-            image = tf.image.resize_image_with_crop_or_pad(image, 28, 28)
+            # image = tf.image.resize_image_with_crop_or_pad(image, 64, 64)
+            image = tf.image.resize_image_with_crop_or_pad(image, 224, 224)
         image = (image - means_tensor) / stds_tensor
 
-        label = tf.one_hot(indices=label, depth=n_classes)
+        # label = tf.one_hot(indices=label, depth=n_classes)
+        label = tf.one_hot(indices=label, depth=1000)
         return image, label
 
     @staticmethod

@@ -15,7 +15,8 @@ import tensorflow as tf
 
 
 class ConvLayer(BaseLayer):
-    def __init__(self, x, weight_dict=None, is_dropout=False, is_training=False, regularizer_conv=None, stride=1, is_shared=False, share_scope=None, is_merge_bn=False):
+    def __init__(self, x, weight_dict=None, is_dropout=False, is_training=False, regularizer_conv=None, stride=1,
+                 is_shared=False, share_scope=None, is_merge_bn=False):
         super(ConvLayer, self).__init__()
         if is_shared:
             if is_merge_bn:
@@ -43,12 +44,17 @@ class ConvLayer(BaseLayer):
                                            beta_initializer=beta, scale=False, moving_mean_initializer=mean,
                                            moving_variance_initializer=variance,
                                            beta_regularizer=regularizer_conv)
-        self.weight_tensors = [filt, tf.get_variable('batch_normalization/beta'), tf.get_variable('batch_normalization/moving_mean'), tf.get_variable('batch_normalization/moving_variance')]
+        self.weight_tensors = [filt, tf.get_variable('batch_normalization/beta'),
+                               tf.get_variable('batch_normalization/moving_mean'),
+                               tf.get_variable('batch_normalization/moving_variance')]
         self.layer_output = bn
 
-    def create_share(self, x, weight_dict=None, is_dropout=False, is_training=False, regularizer_conv=None, stride=1, share_scope=None):
+    def create_share(self, x, weight_dict=None, is_dropout=False, is_training=False, regularizer_conv=None, stride=1,
+                     share_scope=None):
         self.layer_input = x
-        weights_specific, beta, mean, variance, permutation, weights_shared = self.get_conv_filter_shared(weight_dict, regularizer_conv, share_scope)
+        weights_specific, beta, mean, variance, permutation, weights_shared = self.get_conv_filter_shared(weight_dict,
+                                                                                                          regularizer_conv,
+                                                                                                          share_scope)
         weights = tf.concat([weights_shared, weights_specific], axis=-1)
 
         conv = tf.nn.conv2d(x, weights, [1, stride, stride, 1], padding='SAME')
@@ -65,6 +71,16 @@ class ConvLayer(BaseLayer):
         self.layer_output = tf.gather(bn, permutation, axis=-1)
 
     def create_merge(self, x, weight_dict=None, is_dropout=False, is_training=False, regularizer_conv=None, stride=1):
+        """
+        create a conv layer with biases and without bn
+        :param x:
+        :param weight_dict:
+        :param is_dropout:
+        :param is_training:
+        :param regularizer_conv:
+        :param stride:
+        :return:
+        """
         self.layer_input = x
         filt, biases = self.get_conv_filter_bn_merge(weight_dict, regularizer_conv)
         conv = tf.nn.conv2d(x, filt, [1, stride, stride, 1], padding='SAME')
@@ -76,9 +92,12 @@ class ConvLayer(BaseLayer):
         self.weight_tensors = [filt, biases]
         self.layer_output = conv
 
-    def create_share_merge(self, x, weight_dict=None, is_dropout=False, is_training=False, regularizer_conv=None, stride=1, share_scope=None):
+    def create_share_merge(self, x, weight_dict=None, is_dropout=False, is_training=False, regularizer_conv=None,
+                           stride=1, share_scope=None):
         self.layer_input = x
-        weights_specific, biases, permutation, weights_shared = self.get_conv_filter_shared_merge(weight_dict, regularizer_conv, share_scope)
+        weights_specific, biases, permutation, weights_shared = self.get_conv_filter_shared_merge(weight_dict,
+                                                                                                  regularizer_conv,
+                                                                                                  share_scope)
         weights = tf.concat([weights_shared, weights_specific], axis=-1)
 
         conv = tf.nn.conv2d(x, weights, [1, stride, stride, 1], padding='SAME')
@@ -107,11 +126,13 @@ class ConvLayer(BaseLayer):
     def get_conv_filter_shared(weight_dict, regularizer_conv, share_scope):
         scope_name = tf.get_variable_scope().name
 
-        filt = tf.get_variable(name="weights", initializer=weight_dict[scope_name + '/weights'], regularizer=regularizer_conv)
+        filt = tf.get_variable(name="weights", initializer=weight_dict[scope_name + '/weights'],
+                               regularizer=regularizer_conv)
         beta = tf.constant_initializer(weight_dict[scope_name + '/batch_normalization/beta'])
         mean = tf.constant_initializer(weight_dict[scope_name + '/batch_normalization/moving_mean'])
         variance = tf.constant_initializer(weight_dict[scope_name + '/batch_normalization/moving_variance'])
-        permutation = tf.get_variable(name='permutation', initializer=weight_dict[scope_name + '/permutation'], trainable=False)
+        permutation = tf.get_variable(name='permutation', initializer=weight_dict[scope_name + '/permutation'],
+                                      trainable=False)
 
         with tf.variable_scope(share_scope, reuse=True):
             with tf.variable_scope('/'.join(scope_name.split('/')[1:])):
@@ -127,7 +148,7 @@ class ConvLayer(BaseLayer):
         filt = tf.get_variable(name="weights", initializer=weight_dict[scope_name + '/weights'],
                                regularizer=regularizer_conv)
         biases = tf.get_variable(name="biases", initializer=weight_dict[scope_name + '/biases'],
-                               regularizer=regularizer_conv)
+                                 regularizer=regularizer_conv)
 
         return filt, biases
 
@@ -139,7 +160,7 @@ class ConvLayer(BaseLayer):
                                regularizer=regularizer_conv)
 
         biases = tf.get_variable(name="biases", initializer=weight_dict[scope_name + '/biases'],
-                               regularizer=regularizer_conv)
+                                 regularizer=regularizer_conv)
 
         permutation = tf.get_variable(name='permutation', initializer=weight_dict[scope_name + '/permutation'],
                                       trainable=False)

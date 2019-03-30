@@ -177,6 +177,11 @@ class ResNet(BaseModel):
         self.weight_dict[meta_key_in_weight] = meta_val
 
     def fetch_weight(self, sess):
+        """
+        get all the parameters, including the
+        :param sess:
+        :return:
+        """
         weight_dict = dict()
         weight_list = list()
         for layer in self.layers:
