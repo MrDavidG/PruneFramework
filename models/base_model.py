@@ -18,6 +18,30 @@ from utils.time_stamp import print_with_time_stamp as print
 
 class BaseModel:
     def __init__(self, config):
+        self.is_training = None
+        self.regularizer_conv = None
+        self.regularizer_fc = None
+
+        self.op_loss = None
+        self.op_accuracy = None
+        self.op_logits = None
+        self.op_opt = None
+        self.opt = None
+
+        self.X = None
+        self.Y = None
+        self.n_classes = None
+        self.test_init = None
+        self.train_init = None
+        self.hessian_init = None
+        self.total_batches_train = None
+        self.n_samples_train = None
+        self.n_samples_val = None
+        self.share_scope = None
+
+        self.kl_total = None
+        self.layers = list()
+
         # config of the model
         self.config = config
         # init the global step

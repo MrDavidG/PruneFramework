@@ -30,6 +30,5 @@ class BaseLayer:
         weight_vals = sess.run(self.weight_tensors)
         weight_dict = dict()
         for i in range(len(self.weight_tensors)):
-            # TODO: why a list has the attribute name?
             weight_dict[self.weight_tensors[i].name] = weight_vals[i]
         return weight_dict

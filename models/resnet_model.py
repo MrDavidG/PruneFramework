@@ -34,30 +34,7 @@ class ResNet(BaseModel):
         self.imgs_path = self.config.dataset_path + task_name + '/'
         self.meta_keys_with_default_val = {"is_merge_bn": False}
 
-        self.is_training = None
-        self.regularizer_conv = None
-        self.regularizer_fc = None
-
         self.task_name = task_name
-
-        self.op_loss = None
-        self.op_accuracy = None
-        self.op_logits = None
-        self.op_opt = None
-        self.opt = None
-
-        self.X = None
-        self.Y = None
-        self.n_classes = None
-        self.test_init = None
-        self.train_init = None
-        self.hessian_init = None
-        self.total_batches_train = None
-        self.n_samples_train = None
-        self.n_samples_val = None
-        self.share_scope = None
-
-        self.layers = list()
 
         self.load_dataset()
 

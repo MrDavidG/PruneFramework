@@ -14,6 +14,7 @@ Description.
 from models.base_model import BaseModel
 from layers.conv_layer import ConvLayer
 from layers.fc_layer import FullConnectedLayer
+from layers.ib_layer import InformationBottleneckLayer
 from data_loader.image_data_generator import ImageDataGenerator
 from utils.config import process_config
 
@@ -22,7 +23,6 @@ import numpy as np
 import pickle
 import time
 import os
-import keras
 
 
 class VGGModel(BaseModel):
@@ -32,33 +32,11 @@ class VGGModel(BaseModel):
         self.init_saver()
 
         self.imgs_path = self.config.dataset_path + task_name + '/'
+        self.method_prune = self.config.method_prune
         # conv with biases and without bn
         self.meta_keys_with_default_val = {"is_merge_bn": True}
 
-        self.is_training = None
-        self.regularizer_conv = None
-        self.regularizer_fc = None
-
         self.task_name = task_name
-
-        self.op_loss = None
-        self.op_accuracy = None
-        self.op_logits = None
-        self.op_opt = None
-        self.opt = None
-
-        self.X = None
-        self.Y = None
-        self.n_classes = None
-        self.test_init = None
-        self.train_init = None
-        self.hessian_init = None
-        self.total_batches_train = None
-        self.n_samples_train = None
-        self.n_samples_val = None
-        self.share_scope = None
-
-        self.layers = list()
 
         self.load_dataset()
 
@@ -119,6 +97,31 @@ class VGGModel(BaseModel):
         weight_dict[self.task_name + '/fc8/weights'] = weight_dict_pre_train['fc8'][0]
         weight_dict[self.task_name + '/fc8/biases'] = weight_dict_pre_train['fc8'][1]
 
+        # parameters of the information bottleneck
+        if self.method_prune is 'info_bottle':
+            dim_list = [64, 64,
+                        128, 128,
+                        256, 256, 256,
+                        512, 512, 512,
+                        512, 512, 512,
+                        4096, 4096]
+            for i, name_layer in enumerate(['conv1_1', 'conv1_2',
+                                            'conv2_1', 'conv2_2',
+                                            'conv3_1', 'conv3_2', 'conv3_3',
+                                            'conv4_1', 'conv4_2', 'conv4_3',
+                                            'conv5_1', 'conv5_2', 'conv5_3',
+                                            'fc6', 'fc7']):
+                dim = dim_list[i]
+                weight_dict[self.task_name + name_layer + '/info_bottle/mu'] = np.random.normal(loc=9, scale=0.01,
+                                                                                                size=[dim, 1]).astype(
+                    np.float32)
+                # TODO: 貌似每次计算的时候epsilon都是重新初始化的随机vector？感觉很奇怪
+                # weight_dict[self.task_name + name_layer + '/info_bottle/epsilon'] = np.random.normal()
+                weight_dict[self.task_name + name_layer + '/info_bottle/delta'] = np.random.normal(loc=9, scale=0.01,
+                                                                                                   size=[dim,
+                                                                                                         1]).astype(
+                    np.float32)
+
         return weight_dict
 
     def meta_val(self, meta_key):
@@ -142,6 +145,8 @@ class VGGModel(BaseModel):
         self.layers.clear()
         with tf.variable_scope(self.task_name, reuse=tf.AUTO_REUSE):
             y = self.X
+            self.kl_total = 0.
+
             for conv_name in ['conv1_1', 'conv1_2', 'pooling',
                               'conv2_1', 'conv2_2', 'pooling',
                               'conv3_1', 'conv3_2', 'conv3_3', 'pooling',
@@ -154,11 +159,17 @@ class VGGModel(BaseModel):
                                          share_scope=self.share_scope, is_merge_bn=self.meta_val('is_merge_bn'))
                         self.layers.append(conv)
                         y = conv.layer_output
+
+                    # pruning of the method 'Information Bottleneck'
+                    if self.method_prune is 'info_bottle':
+                        with tf.variable_scope(conv_name + '_ib'):
+                            y, ib_kld = InformationBottleneckLayer(y, self.weight_dict)
+                            self.kl_total += ib_kld
+
                 else:
                     y = tf.nn.max_pool(y, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
 
             # fc layer
-            # y = keras.layers.Flatten(y)
             y = tf.contrib.layers.flatten(y)
 
             for fc_name in ['fc6', 'fc7']:
@@ -166,6 +177,12 @@ class VGGModel(BaseModel):
                     fc_layer = FullConnectedLayer(y, self.weight_dict, regularizer_fc=self.regularizer_fc)
                     self.layers.append(fc_layer)
                     y = tf.nn.relu(fc_layer.layer_output)
+
+                    if self.method_prune is 'info_bottle':
+                        with tf.variable_scope(fc_name + '_ib'):
+                            y, ib_kld = InformationBottleneckLayer(y, self.weight_dict)
+                            self.kl_total += ib_kld
+
             with tf.variable_scope('fc8'):
                 fc_layer = FullConnectedLayer(y, self.weight_dict, regularizer_fc=self.regularizer_fc)
                 self.layers.append(fc_layer)
@@ -182,10 +199,15 @@ class VGGModel(BaseModel):
     def loss(self):
         entropy = tf.nn.softmax_cross_entropy_with_logits_v2(labels=self.Y, logits=self.op_logits)
         l2_loss = tf.losses.get_regularization_loss()
-        self.op_loss = tf.reduce_mean(entropy, name='loss') + l2_loss
+
+        # for the pruning method
+        if self.method_prune is 'info_bottle':
+            self.op_loss = tf.reduce_mean(entropy, name='loss') + l2_loss + self.kl_total
+        else:
+            self.op_loss = tf.reduce_mean(entropy, name='loss') + l2_loss
 
     def optimize(self):
-        # 为了让\miu, \delta滑动平均
+        # 为了让bn中的\miu, \delta滑动平均
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
         with tf.control_dependencies(update_ops):
             with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):

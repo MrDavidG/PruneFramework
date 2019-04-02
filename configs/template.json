@@ -10,5 +10,6 @@
   "width": 32,
   "dataset_path": "...",
   "weights_folder": "...",
-  "method_prune": "lbos/info_bottle"
+  "method_prune": "lbos/info_bottle/None",
+  "threshold_info_bottle": 0.1
 }

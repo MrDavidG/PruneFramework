@@ -30,6 +30,7 @@ class FullConnectedLayer(BaseLayer):
         self.layer_output = fc
         return self.layer_output
 
+    # 参数只实例化一次，之后就存在内存中
     @staticmethod
     def get_fc_param(weight_dict, regularizer_fc):
         scope_name = tf.get_variable_scope().name

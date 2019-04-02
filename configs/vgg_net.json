@@ -7,5 +7,5 @@
   "dropout": false,
   "dataset_path": "../datasets/",
   "weights_folder": "...",
-  "method_prune": "lbos/info_bottle"
+  "method_prune": "info_bottle"
 }
