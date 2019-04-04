@@ -32,14 +32,12 @@ class VGGModel(BaseModel):
         self.init_saver()
 
         self.imgs_path = self.config.dataset_path + task_name + '/'
-        self.method_prune = self.config.method_prune
         # conv with biases and without bn
         self.meta_keys_with_default_val = {"is_merge_bn": True}
 
         self.task_name = task_name
 
         self.load_dataset()
-
         self.n_classes = self.Y.shape[1]
 
         if not model_path:
@@ -98,7 +96,7 @@ class VGGModel(BaseModel):
         weight_dict[self.task_name + '/fc8/biases'] = weight_dict_pre_train['fc8'][1]
 
         # parameters of the information bottleneck
-        if self.method_prune is 'info_bottle':
+        if self.prune_method == 'info_bottle':
             dim_list = [64, 64,
                         128, 128,
                         256, 256, 256,
@@ -112,14 +110,16 @@ class VGGModel(BaseModel):
                                             'conv5_1', 'conv5_2', 'conv5_3',
                                             'fc6', 'fc7']):
                 dim = dim_list[i]
-                weight_dict[self.task_name + name_layer + '/info_bottle/mu'] = np.random.normal(loc=9, scale=0.01,
-                                                                                                size=[dim, 1]).astype(
+                weight_dict[self.task_name + '/' + name_layer + '/info_bottle/mu'] = np.random.normal(loc=9, scale=0.01,
+                                                                                                      size=[1,
+                                                                                                            dim]).astype(
                     np.float32)
                 # TODO: 貌似每次计算的时候epsilon都是重新初始化的随机vector？感觉很奇怪
                 # weight_dict[self.task_name + name_layer + '/info_bottle/epsilon'] = np.random.normal()
-                weight_dict[self.task_name + name_layer + '/info_bottle/delta'] = np.random.normal(loc=9, scale=0.01,
-                                                                                                   size=[dim,
-                                                                                                         1]).astype(
+                weight_dict[self.task_name + '/' + name_layer + '/info_bottle/delta'] = np.random.normal(loc=9,
+                                                                                                         scale=0.01,
+                                                                                                         size=[1,
+                                                                                                               dim]).astype(
                     np.float32)
 
         return weight_dict
@@ -146,13 +146,14 @@ class VGGModel(BaseModel):
         with tf.variable_scope(self.task_name, reuse=tf.AUTO_REUSE):
             y = self.X
             self.kl_total = 0.
-
-            for conv_name in ['conv1_1', 'conv1_2', 'pooling',
-                              'conv2_1', 'conv2_2', 'pooling',
-                              'conv3_1', 'conv3_2', 'conv3_3', 'pooling',
-                              'conv4_1', 'conv4_2', 'conv4_3', 'pooling',
-                              'conv5_1', 'conv5_2', 'conv5_3', 'pooling']:
-                if conv_name is not 'pooling':
+            # the name of the layer and the coefficient of the kl divergence
+            for set_layer in [('conv1_1', 1.0 / 32), ('conv1_2', 1.0 / 32), 'pooling',
+                              ('conv2_1', 1.0 / 16), ('conv2_2', 1.0 / 16), 'pooling',
+                              ('conv3_1', 1.0 / 8), ('conv3_2', 1.0 / 8), ('conv3_3', 1.0 / 8), 'pooling',
+                              ('conv4_1', 1.0 / 4), ('conv4_2', 1.0 / 4), ('conv4_3', 1.0 / 4), 'pooling',
+                              ('conv5_1', 1.0 / 2), ('conv5_2', 1.0 / 2), ('conv5_3', 1.0 / 2), 'pooling']:
+                if set_layer != 'pooling':
+                    conv_name, kl_mult = set_layer
                     with tf.variable_scope(conv_name):
                         conv = ConvLayer(y, self.weight_dict, self.config.dropout, self.is_training,
                                          self.regularizer_conv, is_shared=self.is_layer_shared(conv_name),
@@ -161,9 +162,11 @@ class VGGModel(BaseModel):
                         y = conv.layer_output
 
                     # pruning of the method 'Information Bottleneck'
-                    if self.method_prune is 'info_bottle':
-                        with tf.variable_scope(conv_name + '_ib'):
-                            y, ib_kld = InformationBottleneckLayer(y, self.weight_dict)
+                    if self.prune_method == 'info_bottle':
+                        with tf.variable_scope(conv_name):
+                            ib_layer = InformationBottleneckLayer(y, self.weight_dict, is_training=self.is_training,
+                                                                  kl_mult=kl_mult, mask_threshold=self.prune_threshold)
+                            y, ib_kld = ib_layer.layer_output
                             self.kl_total += ib_kld
 
                 else:
@@ -178,15 +181,16 @@ class VGGModel(BaseModel):
                     self.layers.append(fc_layer)
                     y = tf.nn.relu(fc_layer.layer_output)
 
-                    if self.method_prune is 'info_bottle':
-                        with tf.variable_scope(fc_name + '_ib'):
-                            y, ib_kld = InformationBottleneckLayer(y, self.weight_dict)
-                            self.kl_total += ib_kld
+                    if self.prune_method == 'info_bottle':
+                        ib_layer = InformationBottleneckLayer(y, self.weight_dict, is_training=self.is_training,
+                                                              mask_threshold=self.prune_threshold)
+                        y, ib_kld = ib_layer.layer_output
+                        self.kl_total += ib_kld
 
             with tf.variable_scope('fc8'):
                 fc_layer = FullConnectedLayer(y, self.weight_dict, regularizer_fc=self.regularizer_fc)
                 self.layers.append(fc_layer)
-                self.op_logits = tf.nn.softmax(fc_layer.layer_output)
+                self.op_logits = fc_layer.layer_output
 
     def load_dataset(self):
         dataset_train, dataset_val, dataset_hessian, self.total_batches_train, self.n_samples_train, self.n_samples_val = ImageDataGenerator.load_dataset(
@@ -201,8 +205,8 @@ class VGGModel(BaseModel):
         l2_loss = tf.losses.get_regularization_loss()
 
         # for the pruning method
-        if self.method_prune is 'info_bottle':
-            self.op_loss = tf.reduce_mean(entropy, name='loss') + l2_loss + self.kl_total
+        if self.prune_method == 'info_bottle':
+            self.op_loss = tf.reduce_mean(entropy, name='loss') + l2_loss + self.kl_factor * self.kl_total
         else:
             self.op_loss = tf.reduce_mean(entropy, name='loss') + l2_loss
 
@@ -288,8 +292,6 @@ class VGGModel(BaseModel):
         file_handler.close()
 
     def train(self, sess, n_epochs, lr=None):
-        # writer = tf.summary.FileWriter('graphs/convnet', tf.get_default_graph())
-
         if lr is not None:
             self.config.learning_rate = lr
             self.optimize()
@@ -299,6 +301,27 @@ class VGGModel(BaseModel):
         for epoch in range(n_epochs):
             step = self.train_one_epoch(sess, self.train_init, epoch, step)
             self.eval_once(sess, self.test_init, epoch)
+
+    def test(self, sess):
+
+        sess.run(self.test_init)
+        total_loss = 0
+        total_correct_preds = 0
+        n_batches = 0
+
+        try:
+            while True:
+                loss_batch, accuracy_batch = sess.run([self.op_loss, self.op_accuracy],
+                                                      feed_dict={self.is_training: False})
+                total_loss += loss_batch
+                total_correct_preds += accuracy_batch
+                n_batches += 1
+        except tf.errors.OutOfRangeError:
+            pass
+
+        print(
+            '\nTesting {}, val_acc={:%}, val_loss={:f}'.format(self.task_name, total_correct_preds / self.n_samples_val,
+                                                               total_loss / n_batches))
 
     def prune(self):
         # TODO
@@ -330,6 +353,8 @@ if __name__ == '__main__':
         tf.reset_default_graph()
         # session for training
         session = tf.Session(config=gpu_config)
+        # session = tf.InteractiveSession()
+        # 标志位
         training = tf.placeholder(dtype=tf.bool, name='training')
         # regularizer of the conv layer
         regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.0001)
@@ -337,23 +362,24 @@ if __name__ == '__main__':
         regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.0005)
 
         # Step1: Train
-        resnet = VGGModel(config, task_name)
-        resnet.set_global_tensor(training, regularizer_conv, regularizer_fc)
-        resnet.build()
+        model = VGGModel(config, task_name)
+        model.set_global_tensor(training, regularizer_conv, regularizer_fc)
+        model.build()
+
+        # summaries合并
+        # merged = tf.summary.merge_all()
+        # 写到指定的磁盘路径中
+        # train_writer = tf.summary.FileWriter('../log/', session.graph)
+
         session.run(tf.global_variables_initializer())
-
-        resnet.train(sess=session, n_epochs=1, lr=0.1)
-
-        resnet.train(sess=session, n_epochs=20, lr=0.01)
-
-        resnet.train(sess=session, n_epochs=20, lr=0.001)
-
+        model.train(sess=session, n_epochs=1, lr=0.01)
+        # session.run(merged)
         # save the model weights
         if not os.path.exists('model_weights'):
             os.mkdir('model_weights')
-        resnet.save_weight(session, 'model_weights/' + task_name)
+        model.save_weight(session, 'model_weights/' + task_name)
 
     # Step2: Analyze & Step3: Prune
-    resnet.prune()
+    model.prune()
 
     # Step4: Retrain

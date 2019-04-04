@@ -7,5 +7,7 @@
   "dropout": false,
   "dataset_path": "../datasets/",
   "weights_folder": "...",
-  "method_prune": "info_bottle"
+  "prune_method": "None",
+  "prune_threshold": 0.01,
+  "prune_kl_factor": 1e-6
 }

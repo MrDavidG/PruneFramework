@@ -341,8 +341,6 @@ class ResNet(BaseModel):
                                                                  total_loss / n_batches))
 
     def train(self, sess, n_epochs, lr=None):
-        # writer = tf.summary.FileWriter('graphs/convnet', tf.get_default_graph())
-
         if lr is not None:
             self.config.learning_rate = lr
             self.optimize()
@@ -404,6 +402,8 @@ if __name__ == '__main__':
         tf.reset_default_graph()
         # session for training
         session = tf.Session(config=gpu_config)
+        # session = tf.InteractiveSession()
+
         training = tf.placeholder(dtype=tf.bool, name='training')
         # regularizer of the conv layer
         regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.0001)
@@ -414,12 +414,15 @@ if __name__ == '__main__':
         resnet = ResNet(config, task_name)
         resnet.set_global_tensor(training, regularizer_conv, regularizer_fc)
         resnet.build()
+
+        # summaries合并
+        # merged = tf.summary.merge_all()
+        # 写到指定的磁盘路径中
+        train_writer = tf.summary.FileWriter('../log/train', session.graph)
+
         session.run(tf.global_variables_initializer())
-        resnet.train(sess=session, n_epochs=80, lr=0.1)
-
-        resnet.train(sess=session, n_epochs=20, lr=0.01)
-
-        resnet.train(sess=session, n_epochs=20, lr=0.001)
+        resnet.train(sess=session, n_epochs=1, lr=0.1)
+        # session.run(merged)
 
         # save the model weights
         if not os.path.exists('model_weights'):

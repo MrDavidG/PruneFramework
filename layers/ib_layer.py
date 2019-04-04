@@ -18,45 +18,57 @@ import numpy as np
 
 
 class InformationBottleneckLayer(BaseLayer):
-    def __init__(self, x, weight_dict=None):
+    def __init__(self, x, weight_dict=None, is_training=False, kl_mult=1, mask_threshold=0):
         """
 
-        :param x: 相当于论文中的f_i(h_{i-1})
+        :param x:
         :param weight_dict:
+        :param is_training:
+        :param kl_mult:
         """
         super(InformationBottleneckLayer, self).__init__()
-        self.create(x, weight_dict)
+        self.kl_mult = kl_mult
 
-    def create(self, x, weight_dict=None):
+        self.create(x, weight_dict, is_training)
+
+    def create(self, x, weight_dict=None, is_training=False, mask_threshold=0):
         self.layer_input = x
-
-        # TODO: 0 or 1?[0]: batch_size, [1]:dim
-        dim = tf.shape(x)[1]
-        # get parameters
-        mu, delta = self.get_ib_param(weight_dict)
-        # 每次都重新初始化
-        epsilon = tf.random.normal(shape=[dim, 1])
+        # x of conv:    [batch_size, height, width, channel_size]
+        # x of fc:      [batch_size, dim]
+        shape_x = tf.shape(x)
+        # get params
+        mu, delta = self.get_ib_param(weight_dict=weight_dict)
+        # TODO: 每次都重新初始化?
+        epsilon = tf.random.normal(shape=shape_x)
         self.weight_tensors = [mu, delta]
+        # if it isn't training, prune the weights under threshold
         ib = (mu + epsilon * delta) * x
+        if is_training is not None:
+            self.layer_output = (ib, self.get_kld(x))
+        else:
+            # prune
+            mask = self.get_mask(mu, delta, mask_threshold)
+            self.layer_output = (ib * mask, self.get_kld(x))
 
-        self.layer_output = ib
-        return self.layer_output, self.get_kld(x)
+    def get_mask(self, mu, delta, threshold=0):
+        alpha = tf.pow(mu, 2) / tf.poe(delta + 1e-8)
+        return tf.cast(alpha < threshold, dtype=tf.float32)
 
     def get_kld(self, x):
         mu, delta = self.weight_tensors
         # 对应一个neuron的kl散度
         KLD = tf.reduce_sum(tf.log(1 + tf.pow(mu, 2) / (delta + 1e-8)))
         # 乘以一个feature map的大小
-        if x.dim() > 2:
-            KLD *= np.pord(tf.shape(x)[2:])
-
-        return KLD * 0.5
+        KLD *= tf.cond(tf.greater(tf.size(tf.shape(x)), 2), lambda: tf.reduce_prod(tf.to_float(tf.shape(x)[1:3])),
+                       lambda: 1.)
+        return KLD * 0.5 * self.kl_mult
 
     @staticmethod
-    def get_ib_param(self, weight_dict):
+    def get_ib_param(weight_dict):
         scope_name = tf.get_variable_scope().name
 
-        mu = tf.get_variable(name='mu', initializer=weight_dict[scope_name + '/mu'], trainable=True)
-        delta = tf.get_variable(name='delta', initializer=weight_dict[scope_name + '/delta'], trainable=True)
+        mu = tf.get_variable(name='mu', initializer=weight_dict[scope_name + '/info_bottle/mu'], trainable=True)
+        delta = tf.get_variable(name='delta', initializer=weight_dict[scope_name + '/info_bottle/delta'],
+                                trainable=True)
 
         return mu, delta

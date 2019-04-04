@@ -22,6 +22,7 @@ class BaseLayer:
         self.layer_input = None
         self.layer_output = None
 
+
     @abstractmethod
     def create(self, x, **params):
         pass

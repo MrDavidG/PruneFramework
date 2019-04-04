@@ -1,7 +1,7 @@
 {
   "exp_name": "test",
   "batch_size": 64,
-  "cpu_cores":8,
+  "cpu_cores": 8,
   "skip_step": 100,
   "learning_rate": 0.001,
   "dropout": false,
@@ -10,6 +10,6 @@
   "width": 32,
   "dataset_path": "...",
   "weights_folder": "...",
-  "method_prune": "lbos/info_bottle/None",
-  "threshold_info_bottle": 0.1
+  "prune_method": "lbos/info_bottle/None",
+  "prune_threshold": 0.01
 }

@@ -39,8 +39,13 @@ class BaseModel:
         self.n_samples_val = None
         self.share_scope = None
 
-        self.kl_total = None
         self.layers = list()
+
+        self.prune_method = config.prune_method
+        if self.prune_method == 'info_bottle':
+            self.kl_factor = config.prune_kl_factor
+            self.prune_threshold = config.prune_threshold
+            self.kl_total = None
 
         # config of the model
         self.config = config

@@ -1,7 +1,7 @@
 {
   "exp_name": "res_net",
   "batch_size": 128,
-  "cpu_cores":8,
+  "cpu_cores": 8,
   "skip_step": 100,
   "learning_rate": 0.1,
   "dropout": false,
@@ -9,5 +9,6 @@
   "n_blocks_per_group": 4,
   "width": 32,
   "dataset_path": "../datasets/",
-  "method_prune": "lbos"
+  "prune_method": "lbos",
+  "prune_threshold": 0.01
 }
