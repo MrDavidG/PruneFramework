@@ -141,14 +141,14 @@ class ConvLayer(BaseLayer):
         return filt, beta, mean, variance, permutation, share_weights
 
     @staticmethod
-    def get_conv_filter_bn_merge(weight_dict, regularizer_conv):
+    def get_conv_filter_bn_merge(weight_dict, regularizer_conv, trainable=True):
 
         scope_name = tf.get_variable_scope().name
 
         filt = tf.get_variable(name="weights", initializer=weight_dict[scope_name + '/weights'],
-                               regularizer=regularizer_conv)
+                               regularizer=regularizer_conv, trainable=trainable)
         biases = tf.get_variable(name="biases", initializer=weight_dict[scope_name + '/biases'],
-                                 regularizer=regularizer_conv)
+                                 regularizer=regularizer_conv, trainable=trainable)
 
         return filt, biases
 
