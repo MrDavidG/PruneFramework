@@ -17,7 +17,6 @@ from layers.conv_layer import ConvLayer
 from layers.bn_layer import BatchNormalizeLayer
 from layers.fc_layer import FullConnectedLayer
 from layers.res_block import ResBlock
-
 import tensorflow as tf
 import numpy as np
 import pickle
@@ -221,8 +220,6 @@ class ResNet(BaseModel):
                         self.layers.append(res_block.layers[0])
                         self.layers.append(res_block.layers[1])
                         y = res_block.layer_output
-                        # TODO: ib_layer
-
             with tf.variable_scope("end_bn"):
                 bn_layer = BatchNormalizeLayer(y, self.weight_dict, self.regularizer_conv, self.is_training)
                 y = bn_layer.layer_output
@@ -396,6 +393,7 @@ class ResNet(BaseModel):
 if __name__ == '__main__':
 
     config = process_config("../configs/res_net.json")
+    # apply video memory dynamically
     gpu_config = tf.ConfigProto()
     gpu_config.gpu_options.allow_growth = True
 
@@ -423,7 +421,7 @@ if __name__ == '__main__':
         train_writer = tf.summary.FileWriter('../log/train', session.graph)
 
         session.run(tf.global_variables_initializer())
-        resnet.train(sess=session, n_epochs=0, lr=0.1)
+        resnet.train(sess=session, n_epochs=1, lr=0.1)
         # session.run(merged)
 
         # save the model weights

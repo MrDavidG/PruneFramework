@@ -16,4 +16,4 @@ import datetime
 
 def print_with_time_stamp(str):
     time_now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    print(time_now + ': ' + str)
+    print(time_now + ': ' + str + '...')

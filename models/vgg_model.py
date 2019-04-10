@@ -17,6 +17,7 @@ from layers.fc_layer import FullConnectedLayer
 from layers.ib_layer import InformationBottleneckLayer
 from data_loader.image_data_generator import ImageDataGenerator
 from utils.config import process_config
+from utils.time_stamp import print_with_time_stamp as print_
 
 import tensorflow as tf
 import numpy as np
@@ -25,9 +26,9 @@ import time
 import os
 
 
-class VGGModel(BaseModel):
+class VGGNet(BaseModel):
     def __init__(self, config, task_name, model_path=None):
-        super(VGGModel, self).__init__(config)
+        super(VGGNet, self).__init__(config)
 
         self.init_saver()
 
@@ -40,12 +41,12 @@ class VGGModel(BaseModel):
         self.load_dataset()
         self.n_classes = self.Y.shape[1]
 
-        if not model_path:
+        if not model_path or not os.path.exists(model_path):
             self.initial_weight = True
             self.weight_dict = self.construct_initial_weights()
         else:
             self.weight_dict = pickle.load(open(model_path, 'rb'))
-            print('loading weight matrix')
+            print_('loading weight matrix')
             self.initial_weight = False
 
     def init_saver(self):
@@ -291,6 +292,25 @@ class VGGModel(BaseModel):
         pickle.dump(self.weight_dict, file_handler)
         file_handler.close()
 
+    def eval_once(self, sess, init, epoch):
+        #        start_time = time.time()
+        sess.run(init)
+        total_loss = 0
+        total_correct_preds = 0
+        n_batches = 0
+        try:
+            while True:
+                loss_batch, accuracy_batch = sess.run([self.op_loss, self.op_accuracy],
+                                                      feed_dict={self.is_training: False})
+                total_loss += loss_batch
+                total_correct_preds += accuracy_batch
+                n_batches += 1
+        except tf.errors.OutOfRangeError:
+            pass
+
+        print('\nEpoch:{:d}, val_acc={:%}, val_loss={:f}'.format(epoch + 1, total_correct_preds / self.n_samples_val,
+                                                                 total_loss / n_batches))
+
     def train(self, sess, n_epochs, lr=None):
         if lr is not None:
             self.config.learning_rate = lr
@@ -362,22 +382,18 @@ if __name__ == '__main__':
         regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.0005)
 
         # Step1: Train
-        model = VGGModel(config, task_name)
+        model = VGGNet(config, task_name)
         model.set_global_tensor(training, regularizer_conv, regularizer_fc)
         model.build()
 
-        # summaries合并
-        # merged = tf.summary.merge_all()
-        # 写到指定的磁盘路径中
-        # train_writer = tf.summary.FileWriter('../log/', session.graph)
-
         session.run(tf.global_variables_initializer())
-        model.train(sess=session, n_epochs=1, lr=0.01)
-        # session.run(merged)
+
+        model.train(sess=session, n_epochs=1, lr=0.001)
+
         # save the model weights
         if not os.path.exists('model_weights'):
             os.mkdir('model_weights')
-        model.save_weight(session, 'model_weights/' + task_name)
+        model.save_weight(session, 'model_weights/' + task_name + '.npy')
 
     # Step2: Analyze & Step3: Prune
     model.prune()

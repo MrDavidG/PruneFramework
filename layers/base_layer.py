@@ -21,6 +21,7 @@ class BaseLayer:
         self.weight_tensors = list()
         self.layer_input = None
         self.layer_output = None
+        self.layer_type = None
 
 
     @abstractmethod

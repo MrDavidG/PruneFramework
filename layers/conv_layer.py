@@ -18,6 +18,8 @@ class ConvLayer(BaseLayer):
     def __init__(self, x, weight_dict=None, is_dropout=False, is_training=False, regularizer_conv=None, stride=1,
                  is_shared=False, share_scope=None, is_merge_bn=False):
         super(ConvLayer, self).__init__()
+        self.layer_type = 'C'
+
         if is_shared:
             if is_merge_bn:
                 self.create_share_merge(x, weight_dict, is_dropout, is_training, regularizer_conv, stride, share_scope)
@@ -144,7 +146,7 @@ class ConvLayer(BaseLayer):
     def get_conv_filter_bn_merge(weight_dict, regularizer_conv, trainable=True):
 
         scope_name = tf.get_variable_scope().name
-
+        print(scope_name)
         filt = tf.get_variable(name="weights", initializer=weight_dict[scope_name + '/weights'],
                                regularizer=regularizer_conv, trainable=trainable)
         biases = tf.get_variable(name="biases", initializer=weight_dict[scope_name + '/biases'],

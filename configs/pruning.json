@@ -1,6 +1,9 @@
 {
-  "exp_name": "test",
-  "batch_size": 64,
+  "exp_name": "pruning",
+  "model_path": "../models/model_weights/mnist.npy",
+  "model_type": "VGG",
+
+  "batch_size": 2,
   "cpu_cores": 8,
   "skip_step": 100,
   "learning_rate": 0.001,
