@@ -33,7 +33,6 @@ class BaseModel:
         self.n_classes = None
         self.test_init = None
         self.train_init = None
-        self.hessian_init = None
         self.total_batches_train = None
         self.n_samples_train = None
         self.n_samples_val = None

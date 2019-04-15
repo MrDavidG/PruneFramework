@@ -17,3 +17,8 @@ import datetime
 def print_with_time_stamp(str):
     time_now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print(time_now + ': ' + str + '...')
+
+
+def print_with_time_stamp_line(str):
+    time_now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print('\r' + time_now + ': ' + str + '...', end=' ')

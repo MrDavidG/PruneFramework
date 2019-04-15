@@ -22,7 +22,7 @@ class BatchNormalizeLayer(BaseLayer):
     def create(self, x, weight_dict=None, regularizer_conv=None, is_training=False):
         self.layer_input = x
 
-        beta, mean, variance = BatchNormalizeLayer.get_bn_param(weight_dict)
+        beta, mean, variance = self.get_bn_param(weight_dict)
 
         bn = tf.layers.batch_normalization(x, momentum=0.1, epsilon=1e-05, training=is_training,
                                            beta_initializer=beta, scale=False, moving_mean_initializer=mean,
@@ -31,12 +31,9 @@ class BatchNormalizeLayer(BaseLayer):
         self.layer_output = bn
         return self.layer_output
 
-    @staticmethod
-    def get_bn_param(weight_dict):
-        scope_name = tf.get_variable_scope().name
-
-        beta = tf.constant_initializer(weight_dict[scope_name + '/batch_normalization/beta'])
-        mean = tf.constant_initializer(weight_dict[scope_name + '/batch_normalization/moving_mean'])
-        variance = tf.constant_initializer(weight_dict[scope_name + '/batch_normalization/moving_variance'])
+    def get_bn_param(self, weight_dict):
+        beta = tf.constant_initializer(weight_dict[self.layer_name + '/batch_normalization/beta'])
+        mean = tf.constant_initializer(weight_dict[self.layer_name + '/batch_normalization/moving_mean'])
+        variance = tf.constant_initializer(weight_dict[self.layer_name + '/batch_normalization/moving_variance'])
 
         return beta, mean, variance

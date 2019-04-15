@@ -1,139 +1,46 @@
 import tensorflow as tf
 
-import numpy as np
-import torch
-
-
-def unfold_kernel(kernel):
-    """
-    In pytorch format, kernel is stored as [height, width, in_channel, out_channel]
-    Unfold kernel into a 2-dimension weights: [height * width * in_channel, out_channel]
-    :param kernel: numpy ndarray
-    :return:
-    """
-    k_shape = kernel.shape
-    weight = np.zeros([k_shape[0] * k_shape[1] * k_shape[2], k_shape[3]])
-    for i in range(k_shape[3]):
-        weight[:, i] = np.reshape(kernel[:, :, :, i], [-1])
-    return weight
-
-
-def his_unfold_kernel(kernel):
-    """
-    In pytorch format, kernel is stored as [out_channel, in_channel, height, width]
-    Unfold kernel into a 2-dimension weights: [height * width * in_channel, out_channel]
-    :param kernel: numpy ndarray
-    :return:
-    """
-    k_shape = kernel.shape
-    weight = np.zeros([k_shape[1] * k_shape[2] * k_shape[3], k_shape[0]])
-    for i in range(k_shape[0]):
-        weight[:, i] = np.reshape(kernel[i, :, :, :], [-1])
-
-    return weight
-
+import os
+import scipy.io as scio
+import shutil
 
 if __name__ == '__main__':
-    a = np.array([[[[0.1, 0.2],
-                    [0.3, 0.4],
-                    [0.5, 0.6]],
-                   [[0.7, 0.8],
-                    [0.9, 1.0],
-                    [1.1, 1.2]],
-                   [[1.3, 1.4],
-                    [1.5, 1.6],
-                    [1.7, 1.8]],
-                   [[1.9, 2.],
-                    [2.1, 2.2],
-                    [2.3, 2.4]]],
+    path_meta = '/local/home/david/Datasets/ILSVRC2012_devkit_t12/data/meta.mat'
+    path_train = '/local/home/david/Datasets/ILSVRC2012/train/'
+    path_val = '/local/home/david/Datasets/ILSVRC2012/val/'
+    path_val_ground_truth = '/local/home/david/Datasets//ILSVRC2012_devkit_t12/data/ILSVRC2012_validation_ground_truth.txt'
 
-                  [[[2.5, 0.],
-                    [0., 0.],
-                    [0., 0.]],
-                   [[0., 0.],
-                    [0., 0.],
-                    [0., 0.]],
-                   [[0., 0.],
-                    [0., 0.],
-                    [0., 0.]],
-                   [[0., 0.],
-                    [0., 0.],
-                    [0., 0.]]],
-                  [[[0., 0.],
-                    [0., 0.],
-                    [0., 0.]],
-                   [[0., 0.],
-                    [0., 0.],
-                    [0., 0.]],
-                   [[0., 0.],
-                    [0., 0.],
-                    [0., 0.]],
-                   [[0., 0.],
-                    [0., 0.],
-                    [0., 0.]]],
-                  [[[0., 0.],
-                    [0., 0.],
-                    [0., 0.]],
-                   [[0., 0.],
-                    [0., 0.],
-                    [0., 0.]],
-                   [[0., 0.],
-                    [0., 0.],
-                    [0., 0.]],
-                   [[0., 0.],
-                    [0., 0.],
-                    [0., 0.]]],
-                  [[[0., 0.],
-                    [0., 0.],
-                    [0., 0.]],
-                   [[0., 0.],
-                    [0., 0.],
-                    [0., 0.]],
-                   [[0., 0.],
-                    [0., 0.],
-                    [0., 0.]],
-                   [[0., 0.],
-                    [0., 0.],
-                    [0., 0.]]]])
-    # 3,2,4,5
-    b = np.array([[[[0.1, 0., 0., 0., 0.],
-                    [0.7, 0., 0., 0., 0.],
-                    [1.3, 0., 0., 0., 0.],
-                    [1.9, 0., 0., 0., 0.]],
+    # rename for train dataset
+    # 读取mat
+    dic = scio.loadmat(path_meta)
+    array_synset = dic['synsets']
 
-                   [[0.2, 0., 0., 0., 0.],
-                    [0.8, 0., 0., 0., 0.],
-                    [1.4, 0., 0., 0., 0.],
-                    [2., 0., 0., 0., 0.]]],
+    for map in array_synset:
+        ILSVRC_id = int(map[0][0][0][0])
+        WNID = map[0][1][0]
 
-                  [[[0.3, 0., 0., 0., 0.],
-                    [0.9, 0., 0., 0., 0.],
-                    [1.5, 0., 0., 0., 0.],
-                    [2.1, 0., 0., 0., 0.]],
+        if ILSVRC_id > 1000:
+            break
 
-                   [[0.4, 0., 0., 0., 0.],
-                    [1., 0., 0., 0., 0.],
-                    [1.6, 0., 0., 0., 0.],
-                    [2.2, 0., 0., 0., 0.]]],
+        os.rename(path_train + WNID, path_train + str(ILSVRC_id))
 
-                  [[[0.5, 0., 0., 0., 0.],
-                    [1.1, 0., 0., 0., 0.],
-                    [1.7, 0., 0., 0., 0.],
-                    [2.3, 0., 0., 0., 0.]],
+    # Put the images belong to the same category in validation set into the same fold
+    # mkdir
+    for i in range(1000):
+        if not os.path.exists(path_val + str(i + 1)):
+            os.mkdir(path_val + str(i + 1))
 
-                   [[0.6, 0., 0., 0., 0.],
-                    [1.2, 0., 0., 0., 0.],
-                    [1.8, 0., 0., 0., 0.],
-                    [2.4, 0., 0., 0., 0.]]]])
-    print(his_unfold_kernel(a))
-    print('!!!!!!!!!1')
-    print(unfold_kernel(b))
-    h = 2
-    w = 1
-    i = 0
-    o = 1
-    # print(a[o][i][h][w])
-    # print(b[h][w][i][o])
+    file_ground_truth = open(path_val_ground_truth, 'r')
 
-    print(np.transpose(b, (3, 2, 0, 1)))  # 跟A一样了应该
-    print(np.shape(b))
+    for i, label_val in enumerate(file_ground_truth):
+        # index of the image: 00000001—00050000
+
+        index_label = str(i + 1).zfill(8)
+        name_img_val = 'ILSVRC2012_val_' + index_label + '.JPEG'
+
+        print(name_img_val, str(int(label_val)))
+        if os.path.exists(path_val + name_img_val):
+            if not os.path.exists(path_val + str(int(label_val)) + '/' + name_img_val):
+                shutil.move(path_val + name_img_val, path_val + str(int(label_val)) + '/')
+            else:
+                print(name_img_val + '已存在')

@@ -26,32 +26,36 @@ class ImageDataGenerator(DataGenerator):
         image_string = tf.read_file(file_name)
 
         image = tf.cast(tf.image.decode_jpeg(image_string), dtype=tf.float32) / 255.
-        if dataset_name in ['gtsrb', 'omniglot', 'svhn', 'daimlerpedcls', 'mnist']:
-            # image = tf.image.resize_image_with_crop_or_pad(image, 72, 72)
+        if dataset_name in ['imagenet12']:
             image = tf.image.resize_image_with_crop_or_pad(image, 224, 224)
+        elif dataset_name in ['gtsrb', 'omniglot', 'svhn', 'daimlerpedcls']:
+            image = tf.image.resize_image_with_crop_or_pad(image, 72, 72)
         else:
-            # image = tf.random_crop(image, size=[64, 64, 3])
-            image = tf.random_crop(image, size=[224, 224, 1])
+            image = tf.random_crop(image, size=[64, 64, 3])
             # flip the image with the probability of 0.5
             image = tf.image.random_flip_left_right(image)
         image = (image - means_tensor) / stds_tensor
 
-        label = tf.one_hot(indices=label, depth=1000)
+        label = tf.one_hot(indices=label, depth=n_classes)
+
         return image, label
 
     @staticmethod
     def parse_image_val(file_name, label, dataset_name, means_tensor, stds_tensor, n_classes):
         image_string = tf.read_file(file_name)
         image = tf.cast(tf.image.decode_jpeg(image_string), dtype=tf.float32) / 255.
-        if dataset_name in ['gtsrb', 'omniglot', 'svhn', 'daimlerpedcls']:
+        if dataset_name in ['imagenet12']:
+            image = tf.image.resize_image_with_crop_or_pad(image, 224, 224)
+        elif dataset_name in ['gtsrb', 'omniglot', 'svhn', 'daimlerpedcls']:
             image = tf.image.resize_image_with_crop_or_pad(image, 72, 72)
         else:
-            # image = tf.image.resize_image_with_crop_or_pad(image, 64, 64)
-            image = tf.image.resize_image_with_crop_or_pad(image, 224, 224)
+            image = tf.image.resize_image_with_crop_or_pad(image, 64, 64)
         image = (image - means_tensor) / stds_tensor
 
-        # label = tf.one_hot(indices=label, depth=n_classes)
-        label = tf.one_hot(indices=label, depth=1000)
+        assert (image.get_shape() == (224, 224, 3))
+        assert (label <= 1000 & label >= 0)
+
+        label = tf.one_hot(indices=label, depth=n_classes)
         return image, label
 
     @staticmethod
@@ -116,14 +120,6 @@ class ImageDataGenerator(DataGenerator):
         dataset_train = dataset_train.batch(batch_size)
         dataset_train = dataset_train.prefetch(buffer_size=1)
 
-        dataset_hessian = tf.data.Dataset.from_tensor_slices((file_paths_train, labels_train))
-        dataset_hessian = dataset_hessian.shuffle(buffer_size=100000)
-        dataset_hessian = dataset_hessian.map(
-            map_func=lambda x, y: ImageDataGenerator.parse_image_val(x, y, dataset_name, means_tensor, stds_tensor,
-                                                                     n_classes), num_parallel_calls=cpu_cores)
-        dataset_hessian = dataset_hessian.batch(batch_size)
-        dataset_hessian = dataset_hessian.prefetch(buffer_size=1)
-
         dataset_val = tf.data.Dataset.from_tensor_slices((file_paths_val, labels_val))
         dataset_val = dataset_val.map(
             map_func=lambda x, y: ImageDataGenerator.parse_image_val(x, y, dataset_name, means_tensor, stds_tensor,
@@ -131,7 +127,7 @@ class ImageDataGenerator(DataGenerator):
         dataset_val = dataset_val.batch(batch_size)
         dataset_val = dataset_val.prefetch(buffer_size=1)
 
-        return dataset_train, dataset_val, dataset_hessian, total_batches_train, n_sample_train, n_samples_val
+        return dataset_train, dataset_val, total_batches_train, n_sample_train, n_samples_val
 
 
 if __name__ == '__main__':

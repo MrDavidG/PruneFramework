@@ -2,15 +2,13 @@
   "exp_name": "pruning",
   "model_path": "../models/model_weights/mnist.npy",
   "model_type": "VGG",
-
-  "batch_size": 2,
+  "prune_method": "lobs",
+  "batch_size": 1,
   "cpu_cores": 8,
   "skip_step": 100,
   "learning_rate": 0.001,
   "dropout": false,
   "dataset_path": "/local/home/david/Datasets/",
   "weights_folder": "...",
-  "prune_method": "None",
-  "prune_threshold": 0.01,
-  "prune_kl_factor": 1e-6
+  "use_Woodbury_list": []
 }

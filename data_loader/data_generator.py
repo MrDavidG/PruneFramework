@@ -16,14 +16,13 @@ import tensorflow as tf
 
 class DataGenerator:
     @staticmethod
-    def dataset_iterator(dataset_train, dataset_val, dataset_hessian):
+    def dataset_iterator(dataset_train, dataset_val):
         vgg_iter = tf.data.Iterator.from_structure(dataset_train.output_types, dataset_train.output_shapes)
         x, y = vgg_iter.get_next()
 
         # initializer for train_data
         train_init = vgg_iter.make_initializer(dataset_train)
         test_init = vgg_iter.make_initializer(dataset_val)
-        hessian_init = vgg_iter.make_initializer(dataset_hessian)
 
         # return dataset_train, dataset_val, nb_exp_train, np_exp_val
-        return train_init, test_init, hessian_init, x, y
+        return train_init, test_init, x, y

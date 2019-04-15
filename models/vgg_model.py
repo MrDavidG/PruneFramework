@@ -45,7 +45,7 @@ class VGGNet(BaseModel):
             self.initial_weight = True
             self.weight_dict = self.construct_initial_weights()
         else:
-            self.weight_dict = pickle.load(open(model_path, 'rb'))
+            self.weight_dict = pickle.load(open(model_path, 'rb'), encoding='bytes')
             print_('loading weight matrix')
             self.initial_weight = False
 
@@ -54,47 +54,58 @@ class VGGNet(BaseModel):
 
     # set the initialized weight and shape for each layer
     def construct_initial_weights(self):
-        weight_dict_pre_train = np.load('../datasets/vgg16.npy', encoding='latin1').item()
+        weight_dict_pre_train = np.load('../datasets/vgg16.npy', encoding='latin1')  # .item()
         weight_dict = dict()
 
         # the first 2 layers
-        weight_dict[self.task_name + '/conv1_1/weights'] = weight_dict_pre_train['conv1_1'][0]
-        weight_dict[self.task_name + '/conv1_1/biases'] = weight_dict_pre_train['conv1_1'][1]
-        weight_dict[self.task_name + '/conv1_2/weights'] = weight_dict_pre_train['conv1_2'][0]
-        weight_dict[self.task_name + '/conv1_2/biases'] = weight_dict_pre_train['conv1_2'][1]
+        weight_dict['conv1_1/weights'] = weight_dict_pre_train['conv1_1'][0]
+        weight_dict['conv1_1/biases'] = weight_dict_pre_train['conv1_1'][1]
+        weight_dict['conv1_2/weights'] = weight_dict_pre_train['conv1_2'][0]
+        weight_dict['conv1_2/biases'] = weight_dict_pre_train['conv1_2'][1]
         # the second 2 layers
-        weight_dict[self.task_name + '/conv2_1/weights'] = weight_dict_pre_train['conv2_1'][0]
-        weight_dict[self.task_name + '/conv2_1/biases'] = weight_dict_pre_train['conv2_1'][1]
-        weight_dict[self.task_name + '/conv2_2/weights'] = weight_dict_pre_train['conv2_2'][0]
-        weight_dict[self.task_name + '/conv2_2/biases'] = weight_dict_pre_train['conv2_2'][1]
+        weight_dict['conv2_1/weights'] = weight_dict_pre_train['conv2_1'][0]
+        weight_dict['conv2_1/biases'] = weight_dict_pre_train['conv2_1'][1]
+        weight_dict['conv2_2/weights'] = weight_dict_pre_train['conv2_2'][0]
+        weight_dict['conv2_2/biases'] = weight_dict_pre_train['conv2_2'][1]
         # the third 3 layers
-        weight_dict[self.task_name + '/conv3_1/weights'] = weight_dict_pre_train['conv3_1'][0]
-        weight_dict[self.task_name + '/conv3_1/biases'] = weight_dict_pre_train['conv3_1'][1]
-        weight_dict[self.task_name + '/conv3_2/weights'] = weight_dict_pre_train['conv3_2'][0]
-        weight_dict[self.task_name + '/conv3_2/biases'] = weight_dict_pre_train['conv3_2'][1]
-        weight_dict[self.task_name + '/conv3_3/weights'] = weight_dict_pre_train['conv3_3'][0]
-        weight_dict[self.task_name + '/conv3_3/biases'] = weight_dict_pre_train['conv3_3'][1]
+        weight_dict['conv3_1/weights'] = weight_dict_pre_train['conv3_1'][0]
+        weight_dict['conv3_1/biases'] = weight_dict_pre_train['conv3_1'][1]
+        weight_dict['conv3_2/weights'] = weight_dict_pre_train['conv3_2'][0]
+        weight_dict['conv3_2/biases'] = weight_dict_pre_train['conv3_2'][1]
+        weight_dict['conv3_3/weights'] = weight_dict_pre_train['conv3_3'][0]
+        weight_dict['conv3_3/biases'] = weight_dict_pre_train['conv3_3'][1]
         # the forth 3 layers
-        weight_dict[self.task_name + '/conv4_1/weights'] = weight_dict_pre_train['conv4_1'][0]
-        weight_dict[self.task_name + '/conv4_1/biases'] = weight_dict_pre_train['conv4_1'][1]
-        weight_dict[self.task_name + '/conv4_2/weights'] = weight_dict_pre_train['conv4_2'][0]
-        weight_dict[self.task_name + '/conv4_2/biases'] = weight_dict_pre_train['conv4_2'][1]
-        weight_dict[self.task_name + '/conv4_3/weights'] = weight_dict_pre_train['conv4_3'][0]
-        weight_dict[self.task_name + '/conv4_3/biases'] = weight_dict_pre_train['conv4_3'][1]
+        weight_dict['conv4_1/weights'] = weight_dict_pre_train['conv4_1'][0]
+        weight_dict['conv4_1/biases'] = weight_dict_pre_train['conv4_1'][1]
+        weight_dict['conv4_2/weights'] = weight_dict_pre_train['conv4_2'][0]
+        weight_dict['conv4_2/biases'] = weight_dict_pre_train['conv4_2'][1]
+        weight_dict['conv4_3/weights'] = weight_dict_pre_train['conv4_3'][0]
+        weight_dict['conv4_3/biases'] = weight_dict_pre_train['conv4_3'][1]
         # the fifth 3 layers
-        weight_dict[self.task_name + '/conv5_1/weights'] = weight_dict_pre_train['conv5_1'][0]
-        weight_dict[self.task_name + '/conv5_1/biases'] = weight_dict_pre_train['conv5_1'][1]
-        weight_dict[self.task_name + '/conv5_2/weights'] = weight_dict_pre_train['conv5_2'][0]
-        weight_dict[self.task_name + '/conv5_2/biases'] = weight_dict_pre_train['conv5_2'][1]
-        weight_dict[self.task_name + '/conv5_3/weights'] = weight_dict_pre_train['conv5_3'][0]
-        weight_dict[self.task_name + '/conv5_3/biases'] = weight_dict_pre_train['conv5_3'][1]
+        weight_dict['conv5_1/weights'] = weight_dict_pre_train['conv5_1'][0]
+        weight_dict['conv5_1/biases'] = weight_dict_pre_train['conv5_1'][1]
+        weight_dict['conv5_2/weights'] = weight_dict_pre_train['conv5_2'][0]
+        weight_dict['conv5_2/biases'] = weight_dict_pre_train['conv5_2'][1]
+        weight_dict['conv5_3/weights'] = weight_dict_pre_train['conv5_3'][0]
+        weight_dict['conv5_3/biases'] = weight_dict_pre_train['conv5_3'][1]
         # the full connected layer
-        weight_dict[self.task_name + '/fc6/weights'] = weight_dict_pre_train['fc6'][0]
-        weight_dict[self.task_name + '/fc6/biases'] = weight_dict_pre_train['fc6'][1]
-        weight_dict[self.task_name + '/fc7/weights'] = weight_dict_pre_train['fc7'][0]
-        weight_dict[self.task_name + '/fc7/biases'] = weight_dict_pre_train['fc7'][1]
-        weight_dict[self.task_name + '/fc8/weights'] = weight_dict_pre_train['fc8'][0]
-        weight_dict[self.task_name + '/fc8/biases'] = weight_dict_pre_train['fc8'][1]
+
+        weight_dict['fc6/weights'] = weight_dict_pre_train['fc6'][0]
+        weight_dict['fc6/biases'] = weight_dict_pre_train['fc6'][1]
+        weight_dict['fc7/weights'] = weight_dict_pre_train['fc7'][0]
+        weight_dict['fc7/biases'] = weight_dict_pre_train['fc7'][1]
+        weight_dict['fc8/weights'] = weight_dict_pre_train['fc8'][0]
+        weight_dict['fc8/biases'] = weight_dict_pre_train['fc8'][1]
+
+        # weight_dict['fc6/weights'] = np.random.normal(loc=0., scale=np.sqrt(1./256),
+        #                                               size=[25088, 4096]).astype(np.float32)
+        # weight_dict['fc6/biases'] = np.zeros(4096, dtype=np.float32)
+        # weight_dict['fc7/weights'] = np.random.normal(loc=0., scale=np.sqrt(1./256),
+        #                                               size=[4096, 4096]).astype(np.float32)
+        # weight_dict['fc7/biases'] = np.zeros(4096, dtype=np.float32)
+        # weight_dict['fc8/weights'] = np.random.normal(loc=0., scale=np.sqrt(1./256),
+        #                                               size=[4096, 1000]).astype(np.float32)
+        # weight_dict['fc8/biases'] = np.zeros(self.n_classes, dtype=np.float32)
 
         # parameters of the information bottleneck
         if self.prune_method == 'info_bottle':
@@ -111,16 +122,16 @@ class VGGNet(BaseModel):
                                             'conv5_1', 'conv5_2', 'conv5_3',
                                             'fc6', 'fc7']):
                 dim = dim_list[i]
-                weight_dict[self.task_name + '/' + name_layer + '/info_bottle/mu'] = np.random.normal(loc=9, scale=0.01,
-                                                                                                      size=[1,
-                                                                                                            dim]).astype(
+                weight_dict[name_layer + '/info_bottle/mu'] = np.random.normal(loc=9, scale=0.01,
+                                                                               size=[1,
+                                                                                     dim]).astype(
                     np.float32)
                 # TODO: 貌似每次计算的时候epsilon都是重新初始化的随机vector？感觉很奇怪
                 # weight_dict[self.task_name + name_layer + '/info_bottle/epsilon'] = np.random.normal()
-                weight_dict[self.task_name + '/' + name_layer + '/info_bottle/delta'] = np.random.normal(loc=9,
-                                                                                                         scale=0.01,
-                                                                                                         size=[1,
-                                                                                                               dim]).astype(
+                weight_dict[name_layer + '/info_bottle/delta'] = np.random.normal(loc=9,
+                                                                                  scale=0.01,
+                                                                                  size=[1,
+                                                                                        dim]).astype(
                     np.float32)
 
         return weight_dict
@@ -164,11 +175,10 @@ class VGGNet(BaseModel):
 
                     # pruning of the method 'Information Bottleneck'
                     if self.prune_method == 'info_bottle':
-                        with tf.variable_scope(conv_name):
-                            ib_layer = InformationBottleneckLayer(y, self.weight_dict, is_training=self.is_training,
-                                                                  kl_mult=kl_mult, mask_threshold=self.prune_threshold)
-                            y, ib_kld = ib_layer.layer_output
-                            self.kl_total += ib_kld
+                        ib_layer = InformationBottleneckLayer(y, self.weight_dict, is_training=self.is_training,
+                                                              kl_mult=kl_mult, mask_threshold=self.prune_threshold)
+                        y, ib_kld = ib_layer.layer_output
+                        self.kl_total += ib_kld
 
                 else:
                     y = tf.nn.max_pool(y, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
@@ -191,15 +201,16 @@ class VGGNet(BaseModel):
             with tf.variable_scope('fc8'):
                 fc_layer = FullConnectedLayer(y, self.weight_dict, regularizer_fc=self.regularizer_fc)
                 self.layers.append(fc_layer)
+                self.xx = tf.reduce_max(fc_layer.layer_output, axis=1)
                 self.op_logits = fc_layer.layer_output
 
     def load_dataset(self):
-        dataset_train, dataset_val, dataset_hessian, self.total_batches_train, self.n_samples_train, self.n_samples_val = ImageDataGenerator.load_dataset(
+        dataset_train, dataset_val, self.total_batches_train, self.n_samples_train, self.n_samples_val = ImageDataGenerator.load_dataset(
             self.config.batch_size, self.config.cpu_cores, self.task_name,
             self.imgs_path)
-        self.train_init, self.test_init, self.hessian_init, self.X, self.Y = ImageDataGenerator.dataset_iterator(
+        self.train_init, self.test_init, self.X, self.Y = ImageDataGenerator.dataset_iterator(
             dataset_train,
-            dataset_val, dataset_hessian)
+            dataset_val)
 
     def loss(self):
         entropy = tf.nn.softmax_cross_entropy_with_logits_v2(labels=self.Y, logits=self.op_logits)
@@ -246,7 +257,7 @@ class VGGNet(BaseModel):
         time_last = time.time()
         try:
             while True:
-                _, loss = sess.run([self.op_opt, self.op_loss], feed_dict={self.is_training: True})
+                _, loss, op_logits, xx = sess.run([self.op_opt, self.op_loss,self.op_logits,self.xx], feed_dict={self.is_training: True})
                 step += 1
                 total_loss += loss
                 n_batches += 1
@@ -316,7 +327,6 @@ class VGGNet(BaseModel):
             self.config.learning_rate = lr
             self.optimize()
 
-        sess.run(tf.variables_initializer(self.opt.variables()))
         step = self.global_step_tensor.eval(session=sess)
         for epoch in range(n_epochs):
             step = self.train_one_epoch(sess, self.train_init, epoch, step)
@@ -343,23 +353,6 @@ class VGGNet(BaseModel):
             '\nTesting {}, val_acc={:%}, val_loss={:f}'.format(self.task_name, total_correct_preds / self.n_samples_val,
                                                                total_loss / n_batches))
 
-    def prune(self):
-        # TODO
-        # self.layers
-        #
-        # for layer in self.layers:
-        #     layer.output
-        #     hessian =
-        #     hessian_inverse =
-
-        # caculate the optimal parameter change and the sensitivity for each parameter at layer l
-
-        pass
-
-    def retrain(self):
-        # TODO
-        pass
-
 
 if __name__ == '__main__':
 
@@ -368,7 +361,7 @@ if __name__ == '__main__':
     gpu_config = tf.ConfigProto()
     gpu_config.gpu_options.allow_growth = True
 
-    for task_name in ['mnist']:
+    for task_name in ['imagenet12']:
         print('training on task {:s}'.format(task_name))
         tf.reset_default_graph()
         # session for training
@@ -387,13 +380,17 @@ if __name__ == '__main__':
         model.build()
 
         session.run(tf.global_variables_initializer())
-
-        model.train(sess=session, n_epochs=1, lr=0.001)
+        #
+        model.train(sess=session, n_epochs=80, lr=0.001)
+        #
+        # model.train(sess=session, n_epochs=20, lr=0.001)
+        #
+        # model.train(sess=session, n_epochs=20, lr=0.0001)
 
         # save the model weights
         if not os.path.exists('model_weights'):
             os.mkdir('model_weights')
-        model.save_weight(session, 'model_weights/' + task_name + '.npy')
+        model.save_weight(session, 'model_weights/vgg_' + task_name)
 
     # Step2: Analyze & Step3: Prune
     model.prune()

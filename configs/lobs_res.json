@@ -1,0 +1,19 @@
+{
+  "exp_name": "pruning",
+  "model_path": "../models/model_weights/mnist.npy",
+  "model_type": "RES",
+  "prune_method": "lobs",
+  "batch_size": 2,
+  "cpu_cores": 8,
+  "skip_step": 100,
+  "learning_rate": 0.1,
+  "dropout": false,
+  "n_group": 3,
+  "n_blocks_per_group": 4,
+  "width": 32,
+  "dataset_path": "/local/home/david/Datasets/",
+  "use_Woodbury_list": [
+    "conv1_1/conv_1",
+    "conv2_1/conv_2"
+  ]
+}

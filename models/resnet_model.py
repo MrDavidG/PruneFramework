@@ -17,6 +17,8 @@ from layers.conv_layer import ConvLayer
 from layers.bn_layer import BatchNormalizeLayer
 from layers.fc_layer import FullConnectedLayer
 from layers.res_block import ResBlock
+from layers.ib_layer import InformationBottleneckLayer
+from datetime import datetime
 
 import tensorflow as tf
 import numpy as np
@@ -41,7 +43,7 @@ class ResNet(BaseModel):
 
         self.n_classes = self.Y.shape[1]
 
-        if not model_path:
+        if not model_path or not os.path.exists(model_path):
             self.initial_weight = True
             self.weight_dict = self.construct_initial_weights()
         else:
@@ -54,15 +56,11 @@ class ResNet(BaseModel):
 
     def construct_initial_weights(self):
         weight_dict = dict()
-        weight_dict[self.task_name + '/pre_conv/weights'] = np.random.normal(loc=0., scale=np.sqrt(1 / (3 * 3 * 3)),
-                                                                             size=[3, 3, 3, self.config.width]).astype(
-            np.float32)
-        weight_dict[self.task_name + '/pre_conv/batch_normalization/beta'] = np.zeros(self.config.width,
-                                                                                      dtype=np.float32)
-        weight_dict[self.task_name + '/pre_conv/batch_normalization/moving_mean'] = np.zeros(self.config.width,
-                                                                                             dtype=np.float32)
-        weight_dict[self.task_name + '/pre_conv/batch_normalization/moving_variance'] = np.ones(self.config.width,
-                                                                                                dtype=np.float32)
+        weight_dict['pre_conv/weights'] = np.random.normal(loc=0., scale=np.sqrt(1 / (3 * 3 * 3)),
+                                                           size=[3, 3, 3, self.config.width]).astype(np.float32)
+        weight_dict['pre_conv/batch_normalization/beta'] = np.zeros(self.config.width, dtype=np.float32)
+        weight_dict['pre_conv/batch_normalization/moving_mean'] = np.zeros(self.config.width, dtype=np.float32)
+        weight_dict['pre_conv/batch_normalization/moving_variance'] = np.ones(self.config.width, dtype=np.float32)
         for i in range(self.config.n_group):
             for j in range(self.config.n_blocks_per_group):
                 block_name = 'conv{:d}_{:d}'.format(i + 1, j + 1)
@@ -70,54 +68,45 @@ class ResNet(BaseModel):
                     input_width = self.config.width * 2 ** i
                 else:
                     input_width = self.config.width * 2 ** (i + 1)
-                weight_dict[self.task_name + '/' + block_name + '/conv_1/weights'] = np.random.normal(loc=0.,
-                                                                                                      scale=np.sqrt(
-                                                                                                          1 / (
-                                                                                                                  3 * 3 * input_width)),
-                                                                                                      size=[3, 3,
-                                                                                                            input_width,
-                                                                                                            self.config.width * 2 ** (
-                                                                                                                    i + 1)]).astype(
+                weight_dict[block_name + '/conv_1/weights'] = np.random.normal(loc=0.,
+                                                                               scale=np.sqrt(1 / (3 * 3 * input_width)),
+                                                                               size=[3, 3, input_width,
+                                                                                     self.config.width * 2 ** (
+                                                                                             i + 1)]).astype(
                     np.float32)
-                weight_dict[self.task_name + '/' + block_name + '/conv_1/batch_normalization/beta'] = np.zeros(
+                weight_dict[block_name + '/conv_1/batch_normalization/beta'] = np.zeros(
                     self.config.width * 2 ** (i + 1), dtype=np.float32)
-                weight_dict[self.task_name + '/' + block_name + '/conv_1/batch_normalization/moving_mean'] = np.zeros(
+                weight_dict[block_name + '/conv_1/batch_normalization/moving_mean'] = np.zeros(
                     self.config.width * 2 ** (i + 1), dtype=np.float32)
-                weight_dict[
-                    self.task_name + '/' + block_name + '/conv_1/batch_normalization/moving_variance'] = np.ones(
+                weight_dict[block_name + '/conv_1/batch_normalization/moving_variance'] = np.ones(
                     self.config.width * 2 ** (i + 1), dtype=np.float32)
 
-                weight_dict[self.task_name + '/' + block_name + '/conv_2/weights'] = np.random.normal(loc=0.,
-                                                                                                      scale=np.sqrt(
-                                                                                                          1 / (
-                                                                                                                  3 * 3 * self.config.width * 2 ** (
-                                                                                                                  i + 1))),
-                                                                                                      size=[3, 3,
-                                                                                                            self.config.width * 2 ** (
-                                                                                                                    i + 1),
-                                                                                                            self.config.width * 2 ** (
-                                                                                                                    i + 1)]).astype(
+                weight_dict[block_name + '/conv_2/weights'] = np.random.normal(loc=0., scale=np.sqrt(
+                    1 / (3 * 3 * self.config.width * 2 ** (i + 1))), size=[3, 3, self.config.width * 2 ** (i + 1),
+                                                                           self.config.width * 2 ** (i + 1)]).astype(
                     np.float32)
-                weight_dict[self.task_name + '/' + block_name + '/conv_2/batch_normalization/beta'] = np.zeros(
+                weight_dict[block_name + '/conv_2/batch_normalization/beta'] = np.zeros(
                     self.config.width * 2 ** (i + 1), dtype=np.float32)
-                weight_dict[self.task_name + '/' + block_name + '/conv_2/batch_normalization/moving_mean'] = np.zeros(
+                weight_dict[block_name + '/conv_2/batch_normalization/moving_mean'] = np.zeros(
                     self.config.width * 2 ** (i + 1), dtype=np.float32)
-                weight_dict[
-                    self.task_name + '/' + block_name + '/conv_2/batch_normalization/moving_variance'] = np.ones(
+                weight_dict[block_name + '/conv_2/batch_normalization/moving_variance'] = np.ones(
                     self.config.width * 2 ** (i + 1), dtype=np.float32)
 
-        weight_dict[self.task_name + '/end_bn/batch_normalization/beta'] = np.zeros(self.config.width * 2 ** 3,
-                                                                                    dtype=np.float32)
-        weight_dict[self.task_name + '/end_bn/batch_normalization/moving_mean'] = np.zeros(self.config.width * 2 ** 3,
-                                                                                           dtype=np.float32)
-        weight_dict[self.task_name + '/end_bn/batch_normalization/moving_variance'] = np.ones(
-            self.config.width * 2 ** 3, dtype=np.float32)
+        weight_dict['end_bn/batch_normalization/beta'] = np.zeros(self.config.width * 2 ** 3, dtype=np.float32)
+        weight_dict['end_bn/batch_normalization/moving_mean'] = np.zeros(self.config.width * 2 ** 3, dtype=np.float32)
+        weight_dict['end_bn/batch_normalization/moving_variance'] = np.ones(self.config.width * 2 ** 3,
+                                                                            dtype=np.float32)
 
-        weight_dict[self.task_name + '/classifier/weights'] = np.random.normal(loc=0., scale=np.sqrt(1 / 256),
-                                                                               size=[256, self.n_classes]).astype(
-            np.float32)
-        weight_dict[self.task_name + '/classifier/biases'] = np.zeros(self.n_classes, dtype=np.float32)
-        weight_dict[self.task_name + '/is_merge_bn'] = False
+        weight_dict['classifier/weights'] = np.random.normal(loc=0., scale=np.sqrt(1 / 256),
+                                                             size=[256, self.n_classes]).astype(np.float32)
+        weight_dict['classifier/biases'] = np.zeros(self.n_classes, dtype=np.float32)
+        weight_dict['is_merge_bn'] = False
+
+        # Init information bottleneck params
+        if self.prune_method == 'info_bottle':
+            for i in range(self.config.n_group):
+                for j in range(self.config.n_blocks_per_group):
+                    block_name = 'conv{:d}_{:d}'.format(i + 1, j + 1)
 
         return weight_dict
 
@@ -201,12 +190,22 @@ class ResNet(BaseModel):
     def inference(self):
         self.layers.clear()
         with tf.variable_scope(self.task_name, reuse=tf.AUTO_REUSE):
+            self.kl_total = 0
+
             with tf.variable_scope('pre_conv'):
                 pre_conv_layer = ConvLayer(self.X, self.weight_dict, self.config.dropout, self.is_training,
                                            self.regularizer_conv, is_shared=self.is_layer_shared('pre_conv'),
                                            share_scope=self.share_scope, is_merge_bn=self.meta_val('is_merge_bn'))
                 self.layers.append(pre_conv_layer)
                 y = pre_conv_layer.layer_output
+
+                # ib layer
+                if self.prune_method == 'info_bottle':
+                    ib_layer = InformationBottleneckLayer(y, self.weight_dict, is_training=self.is_training,
+                                                      mask_threshold=self.prune_threshold)
+                    self.layers.append(ib_layer)
+                    y, ib_kld = ib_layer.layer_output
+                    self.kl_total += ib_kld
 
             for i in range(self.config.n_group):
                 for j in range(self.config.n_blocks_per_group):
@@ -218,10 +217,12 @@ class ResNet(BaseModel):
                         res_block = ResBlock(y, self.weight_dict, self.config.dropout, self.is_training,
                                              self.regularizer_conv, scale_down, is_shared, share_scope=self.share_scope,
                                              is_merge_bn=self.meta_val('is_merge_bn'))
-                        self.layers.append(res_block.layers[0])
-                        self.layers.append(res_block.layers[1])
+                        for layer in res_block.layers:
+                            self.layers.append(layer)
                         y = res_block.layer_output
-                        # TODO: ib_layer
+
+                        if self.prune_method == 'info_bottle':
+                            self.kl_total += res_block.res_kld
 
             with tf.variable_scope("end_bn"):
                 bn_layer = BatchNormalizeLayer(y, self.weight_dict, self.regularizer_conv, self.is_training)
@@ -237,17 +238,21 @@ class ResNet(BaseModel):
 
     # load dataset
     def load_dataset(self):
-        dataset_train, dataset_val, dataset_hessian, self.total_batches_train, self.n_samples_train, self.n_samples_val = \
+        dataset_train, dataset_val, self.total_batches_train, self.n_samples_train, self.n_samples_val = \
             ImageDataGenerator.load_dataset(self.config.batch_size, self.config.cpu_cores, self.task_name,
                                             self.imgs_path)
-        self.train_init, self.test_init, self.hessian_init, self.X, self.Y = ImageDataGenerator.dataset_iterator(
+        self.train_init, self.test_init, self.X, self.Y = ImageDataGenerator.dataset_iterator(
             dataset_train,
-            dataset_val, dataset_hessian)
+            dataset_val)
 
     def loss(self):
         entropy = tf.nn.softmax_cross_entropy_with_logits_v2(labels=self.Y, logits=self.op_logits)
         l2_loss = tf.losses.get_regularization_loss()
-        self.op_loss = tf.reduce_mean(entropy, name='loss') + l2_loss
+
+        if self.prune_method == 'info_bottle':
+            self.op_loss = tf.reduce_mean(entropy, name='loss') + l2_loss + self.kl_factor * self.kl_total
+        else:
+            self.op_loss = tf.reduce_mean(entropy, name='loss') + l2_loss
 
     def optimize(self):
         # 为了让\miu, \delta滑动平均
@@ -277,28 +282,6 @@ class ResNet(BaseModel):
         self.optimize()
         self.evaluate()
 
-    def hessian_conv(self, sess, layer_index):
-        layer = self.layers[layer_index]
-        a = tf.expand_dims(layer.layer_input, axis=-1)
-        b = tf.expand_dims(layer.layer_input, axis=3)
-        outprod = tf.reduce_sum(tf.reduce_mean(tf.multiply(a, b), axis=[1, 2]), axis=[0])
-
-        batch_count = 0
-        print('start calculating hessian of ' + self.task_name)
-        sess.run(self.hessian_init)
-        hessian_sum = 0
-        try:
-            while True:
-                if batch_count == 0:
-                    hessian_sum = sess.run(outprod, feed_dict={self.is_training: False})
-                else:
-                    hessian_sum += sess.run(outprod, feed_dict={self.is_training: False})
-                batch_count += 1
-        except tf.errors.OutOfRangeError:
-            pass
-
-        hessian = hessian_sum / self.n_samples_train
-        return hessian
 
     def train_one_epoch(self, sess, init, epoch, step):
         sess.run(init)
@@ -353,6 +336,7 @@ class ResNet(BaseModel):
         for epoch in range(n_epochs):
             step = self.train_one_epoch(sess, self.train_init, epoch, step)
             self.eval_once(sess, self.test_init, epoch)
+            # 在这里就保存一次？
 
     def test(self, sess):
 
@@ -375,41 +359,22 @@ class ResNet(BaseModel):
             '\nTesting {}, val_acc={:%}, val_loss={:f}'.format(self.task_name, total_correct_preds / self.n_samples_val,
                                                                total_loss / n_batches))
 
-    def prune(self):
-        # TODO
-        # self.layers
-        #
-        # for layer in self.layers:
-        #     layer.output
-        #     hessian =
-        #     hessian_inverse =
-
-            # caculate the optimal parameter change and the sensitivity for each parameter at layer l
-
-        pass
-
-    def retrain(self):
-        # TODO
-        pass
-
 
 if __name__ == '__main__':
 
     config = process_config("../configs/res_net.json")
     gpu_config = tf.ConfigProto()
     gpu_config.gpu_options.allow_growth = True
-
-    for task_name in ['mnist']:
+    # 'gtsrb', 'omniglot', 'svhn',
+    for task_name in ['dtd', 'cifar100', 'daimlerpedcls', 'vgg-flowers', 'ucf101', 'aircraft']:
         print('training on task {:s}'.format(task_name))
         tf.reset_default_graph()
         # session for training
         session = tf.Session(config=gpu_config)
-        # session = tf.InteractiveSession()
 
         training = tf.placeholder(dtype=tf.bool, name='training')
-        # regularizer of the conv layer
+        # regularizers
         regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.0001)
-        # regularizer of the fc layer
         regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.0005)
 
         # Step1: Train
@@ -417,21 +382,16 @@ if __name__ == '__main__':
         resnet.set_global_tensor(training, regularizer_conv, regularizer_fc)
         resnet.build()
 
-        # summaries合并
-        # merged = tf.summary.merge_all()
-        # 写到指定的磁盘路径中
-        train_writer = tf.summary.FileWriter('../log/train', session.graph)
-
         session.run(tf.global_variables_initializer())
-        resnet.train(sess=session, n_epochs=0, lr=0.1)
-        # session.run(merged)
+
+        resnet.train(sess=session, n_epochs=80, lr=0.1)
+
+        resnet.train(sess=session, n_epochs=20, lr=0.01)
+
+        resnet.train(sess=session, n_epochs=20, lr=0.001)
 
         # save the model weights
         if not os.path.exists('model_weights'):
             os.mkdir('model_weights')
-        resnet.save_weight(session, 'model_weights/' + task_name)
-
-    # Step2: Analyze & Step3: Prune
-    resnet.prune()
-
-    # Step4: Retrain
+        print('[%s] Save model weights for model res_%s' % (datetime.now(), task_name))
+        resnet.save_weight(session, 'model_weights/res_' + task_name)

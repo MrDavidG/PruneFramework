@@ -29,7 +29,7 @@ class InformationBottleneckLayer(BaseLayer):
         super(InformationBottleneckLayer, self).__init__()
         self.kl_mult = kl_mult
 
-        self.create(x, weight_dict, is_training)
+        self.create(x, weight_dict, is_training, mask_threshold)
 
     def create(self, x, weight_dict=None, is_training=False, mask_threshold=0):
         self.layer_input = x
@@ -38,15 +38,15 @@ class InformationBottleneckLayer(BaseLayer):
         shape_x = tf.shape(x)
         # get params
         mu, delta = self.get_ib_param(weight_dict=weight_dict)
-        # TODO: 每次都重新初始化?
+
         epsilon = tf.random.normal(shape=shape_x)
         self.weight_tensors = [mu, delta]
         # if it isn't training, prune the weights under threshold
         ib = (mu + epsilon * delta) * x
-        if is_training is not None:
+        if is_training:
             self.layer_output = (ib, self.get_kld(x))
         else:
-            # prune
+            # prune weights
             mask = self.get_mask(mu, delta, mask_threshold)
             self.layer_output = (ib * mask, self.get_kld(x))
 
@@ -63,12 +63,9 @@ class InformationBottleneckLayer(BaseLayer):
                        lambda: 1.)
         return KLD * 0.5 * self.kl_mult
 
-    @staticmethod
-    def get_ib_param(weight_dict):
-        scope_name = tf.get_variable_scope().name
-
-        mu = tf.get_variable(name='mu', initializer=weight_dict[scope_name + '/info_bottle/mu'], trainable=True)
-        delta = tf.get_variable(name='delta', initializer=weight_dict[scope_name + '/info_bottle/delta'],
+    def get_ib_param(self, weight_dict):
+        mu = tf.get_variable(name='mu', initializer=weight_dict[self.layer_name + '/info_bottle/mu'], trainable=True)
+        delta = tf.get_variable(name='delta', initializer=weight_dict[self.layer_name + '/info_bottle/delta'],
                                 trainable=True)
 
         return mu, delta
