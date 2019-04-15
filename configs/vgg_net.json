@@ -1,13 +1,11 @@
 {
   "exp_name": "test",
-  "batch_size": 2,
+  "batch_size": 16,
   "cpu_cores": 8,
   "skip_step": 100,
-  "learning_rate": 0.001,
+  "learning_rate": 0.0001,
   "dropout": false,
   "dataset_path": "/local/home/david/Datasets/",
   "weights_folder": "...",
-  "prune_method": "None",
-  "prune_threshold": 0.01,
-  "prune_kl_factor": 1e-6
+  "prune_method": "None"
 }

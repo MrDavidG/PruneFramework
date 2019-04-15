@@ -27,10 +27,8 @@ import os
 
 
 class VGGNet(BaseModel):
-    def __init__(self, config, task_name, model_path=None):
+    def __init__(self, config, task_name, model_path='./model_weights/vgg_pretrain.npy'):
         super(VGGNet, self).__init__(config)
-
-        self.init_saver()
 
         self.imgs_path = self.config.dataset_path + task_name + '/'
         # conv with biases and without bn
@@ -41,72 +39,17 @@ class VGGNet(BaseModel):
         self.load_dataset()
         self.n_classes = self.Y.shape[1]
 
-        if not model_path or not os.path.exists(model_path):
-            self.initial_weight = True
-            self.weight_dict = self.construct_initial_weights()
-        else:
+        if os.path.exists(model_path):
             self.weight_dict = pickle.load(open(model_path, 'rb'), encoding='bytes')
             print_('loading weight matrix')
             self.initial_weight = False
 
-    def init_saver(self):
-        pass
+        if self.prune_method == 'info_bottle':
+            self.weight_dict = dict(self.weight_dict, **self.construct_initial_weights())
 
     # set the initialized weight and shape for each layer
     def construct_initial_weights(self):
-        weight_dict_pre_train = np.load('../datasets/vgg16.npy', encoding='latin1')  # .item()
         weight_dict = dict()
-
-        # the first 2 layers
-        weight_dict['conv1_1/weights'] = weight_dict_pre_train['conv1_1'][0]
-        weight_dict['conv1_1/biases'] = weight_dict_pre_train['conv1_1'][1]
-        weight_dict['conv1_2/weights'] = weight_dict_pre_train['conv1_2'][0]
-        weight_dict['conv1_2/biases'] = weight_dict_pre_train['conv1_2'][1]
-        # the second 2 layers
-        weight_dict['conv2_1/weights'] = weight_dict_pre_train['conv2_1'][0]
-        weight_dict['conv2_1/biases'] = weight_dict_pre_train['conv2_1'][1]
-        weight_dict['conv2_2/weights'] = weight_dict_pre_train['conv2_2'][0]
-        weight_dict['conv2_2/biases'] = weight_dict_pre_train['conv2_2'][1]
-        # the third 3 layers
-        weight_dict['conv3_1/weights'] = weight_dict_pre_train['conv3_1'][0]
-        weight_dict['conv3_1/biases'] = weight_dict_pre_train['conv3_1'][1]
-        weight_dict['conv3_2/weights'] = weight_dict_pre_train['conv3_2'][0]
-        weight_dict['conv3_2/biases'] = weight_dict_pre_train['conv3_2'][1]
-        weight_dict['conv3_3/weights'] = weight_dict_pre_train['conv3_3'][0]
-        weight_dict['conv3_3/biases'] = weight_dict_pre_train['conv3_3'][1]
-        # the forth 3 layers
-        weight_dict['conv4_1/weights'] = weight_dict_pre_train['conv4_1'][0]
-        weight_dict['conv4_1/biases'] = weight_dict_pre_train['conv4_1'][1]
-        weight_dict['conv4_2/weights'] = weight_dict_pre_train['conv4_2'][0]
-        weight_dict['conv4_2/biases'] = weight_dict_pre_train['conv4_2'][1]
-        weight_dict['conv4_3/weights'] = weight_dict_pre_train['conv4_3'][0]
-        weight_dict['conv4_3/biases'] = weight_dict_pre_train['conv4_3'][1]
-        # the fifth 3 layers
-        weight_dict['conv5_1/weights'] = weight_dict_pre_train['conv5_1'][0]
-        weight_dict['conv5_1/biases'] = weight_dict_pre_train['conv5_1'][1]
-        weight_dict['conv5_2/weights'] = weight_dict_pre_train['conv5_2'][0]
-        weight_dict['conv5_2/biases'] = weight_dict_pre_train['conv5_2'][1]
-        weight_dict['conv5_3/weights'] = weight_dict_pre_train['conv5_3'][0]
-        weight_dict['conv5_3/biases'] = weight_dict_pre_train['conv5_3'][1]
-        # the full connected layer
-
-        weight_dict['fc6/weights'] = weight_dict_pre_train['fc6'][0]
-        weight_dict['fc6/biases'] = weight_dict_pre_train['fc6'][1]
-        weight_dict['fc7/weights'] = weight_dict_pre_train['fc7'][0]
-        weight_dict['fc7/biases'] = weight_dict_pre_train['fc7'][1]
-        weight_dict['fc8/weights'] = weight_dict_pre_train['fc8'][0]
-        weight_dict['fc8/biases'] = weight_dict_pre_train['fc8'][1]
-
-        # weight_dict['fc6/weights'] = np.random.normal(loc=0., scale=np.sqrt(1./256),
-        #                                               size=[25088, 4096]).astype(np.float32)
-        # weight_dict['fc6/biases'] = np.zeros(4096, dtype=np.float32)
-        # weight_dict['fc7/weights'] = np.random.normal(loc=0., scale=np.sqrt(1./256),
-        #                                               size=[4096, 4096]).astype(np.float32)
-        # weight_dict['fc7/biases'] = np.zeros(4096, dtype=np.float32)
-        # weight_dict['fc8/weights'] = np.random.normal(loc=0., scale=np.sqrt(1./256),
-        #                                               size=[4096, 1000]).astype(np.float32)
-        # weight_dict['fc8/biases'] = np.zeros(self.n_classes, dtype=np.float32)
-
         # parameters of the information bottleneck
         if self.prune_method == 'info_bottle':
             dim_list = [64, 64,
@@ -201,7 +144,6 @@ class VGGNet(BaseModel):
             with tf.variable_scope('fc8'):
                 fc_layer = FullConnectedLayer(y, self.weight_dict, regularizer_fc=self.regularizer_fc)
                 self.layers.append(fc_layer)
-                self.xx = tf.reduce_max(fc_layer.layer_output, axis=1)
                 self.op_logits = fc_layer.layer_output
 
     def load_dataset(self):
@@ -257,7 +199,7 @@ class VGGNet(BaseModel):
         time_last = time.time()
         try:
             while True:
-                _, loss, op_logits, xx = sess.run([self.op_opt, self.op_loss,self.op_logits,self.xx], feed_dict={self.is_training: True})
+                _, loss = sess.run([self.op_opt, self.op_loss], feed_dict={self.is_training: True})
                 step += 1
                 total_loss += loss
                 n_batches += 1
@@ -329,8 +271,8 @@ class VGGNet(BaseModel):
 
         step = self.global_step_tensor.eval(session=sess)
         for epoch in range(n_epochs):
-            step = self.train_one_epoch(sess, self.train_init, epoch, step)
             self.eval_once(sess, self.test_init, epoch)
+            step = self.train_one_epoch(sess, self.train_init, epoch, step)
 
     def test(self, sess):
 
@@ -391,8 +333,3 @@ if __name__ == '__main__':
         if not os.path.exists('model_weights'):
             os.mkdir('model_weights')
         model.save_weight(session, 'model_weights/vgg_' + task_name)
-
-    # Step2: Analyze & Step3: Prune
-    model.prune()
-
-    # Step4: Retrain

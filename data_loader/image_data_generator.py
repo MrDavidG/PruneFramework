@@ -52,9 +52,6 @@ class ImageDataGenerator(DataGenerator):
             image = tf.image.resize_image_with_crop_or_pad(image, 64, 64)
         image = (image - means_tensor) / stds_tensor
 
-        assert (image.get_shape() == (224, 224, 3))
-        assert (label <= 1000 & label >= 0)
-
         label = tf.one_hot(indices=label, depth=n_classes)
         return image, label
 

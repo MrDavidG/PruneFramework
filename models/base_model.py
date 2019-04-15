@@ -94,11 +94,3 @@ class BaseModel:
     @abstractmethod
     def optimize(self):
         pass
-
-    @abstractmethod
-    def prune(self):
-        pass
-
-    @abstractmethod
-    def retrain(self):
-        pass
