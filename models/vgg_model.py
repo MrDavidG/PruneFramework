@@ -47,7 +47,6 @@ class VGGNet(BaseModel):
         if self.prune_method == 'info_bottle':
             self.weight_dict = dict(self.weight_dict, **self.construct_initial_weights())
 
-    # set the initialized weight and shape for each layer
     def construct_initial_weights(self):
         weight_dict = dict()
         # parameters of the information bottleneck
@@ -69,7 +68,6 @@ class VGGNet(BaseModel):
                                                                                size=[1,
                                                                                      dim]).astype(
                     np.float32)
-                # TODO: 貌似每次计算的时候epsilon都是重新初始化的随机vector？感觉很奇怪
                 # weight_dict[self.task_name + name_layer + '/info_bottle/epsilon'] = np.random.normal()
                 weight_dict[name_layer + '/info_bottle/delta'] = np.random.normal(loc=9,
                                                                                   scale=0.01,
@@ -114,7 +112,7 @@ class VGGNet(BaseModel):
                                          self.regularizer_conv, is_shared=self.is_layer_shared(conv_name),
                                          share_scope=self.share_scope, is_merge_bn=self.meta_val('is_merge_bn'))
                         self.layers.append(conv)
-                        y = conv.layer_output
+                        y = tf.nn.relu(conv.layer_output)
 
                     # pruning of the method 'Information Bottleneck'
                     if self.prune_method == 'info_bottle':
@@ -271,8 +269,14 @@ class VGGNet(BaseModel):
 
         step = self.global_step_tensor.eval(session=sess)
         for epoch in range(n_epochs):
-            self.eval_once(sess, self.test_init, epoch)
             step = self.train_one_epoch(sess, self.train_init, epoch, step)
+            self.eval_once(sess, self.test_init, epoch)
+
+    def predicte(self, sess, imgs):
+        self.X = imgs
+        self.inference()
+        logits = sess.run(self.op_logits, feed_dict={self.is_training: False})
+        return logits
 
     def test(self, sess):
 
@@ -311,10 +315,9 @@ if __name__ == '__main__':
         # session = tf.InteractiveSession()
         # 标志位
         training = tf.placeholder(dtype=tf.bool, name='training')
-        # regularizer of the conv layer
-        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.0001)
-        # regularizer of the fc layer
-        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.0005)
+
+        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.)
+        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.)
 
         # Step1: Train
         model = VGGNet(config, task_name)
@@ -324,10 +327,8 @@ if __name__ == '__main__':
         session.run(tf.global_variables_initializer())
         #
         model.train(sess=session, n_epochs=80, lr=0.001)
-        #
-        # model.train(sess=session, n_epochs=20, lr=0.001)
-        #
-        # model.train(sess=session, n_epochs=20, lr=0.0001)
+
+        model.train(sess=session, n_epochs=40, lr=0.0001)
 
         # save the model weights
         if not os.path.exists('model_weights'):

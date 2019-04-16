@@ -64,7 +64,7 @@ class ConvLayer(BaseLayer):
         self.layer_input = x
         filt, biases = self.get_conv_filter_bn_merge(weight_dict, regularizer_conv)
         conv = tf.nn.conv2d(x, filt, [1, stride, stride, 1], padding='SAME')
-        conv = conv + biases
+        conv = tf.nn.bias_add(conv, biases)
 
         if is_dropout:
             conv = tf.layers.dropout(conv, noise_shape=[tf.shape(conv)[0], 1, 1, tf.shape(conv)[3]],

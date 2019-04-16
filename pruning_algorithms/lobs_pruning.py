@@ -13,7 +13,6 @@ Description.
 
 from models.vgg_model import VGGNet
 from models.resnet_model import ResNet
-from utils.time_stamp import print_with_time_stamp as print_
 from utils.config import process_config
 
 from numpy.linalg import inv, pinv, LinAlgError
