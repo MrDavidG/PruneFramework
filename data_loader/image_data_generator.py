@@ -25,50 +25,60 @@ class ImageDataGenerator(DataGenerator):
     def parse_image_train(file_name, label, dataset_name, means_tensor, stds_tensor, n_classes):
         image_string = tf.read_file(file_name)
 
-        image = tf.cast(tf.image.decode_jpeg(image_string), dtype=tf.float32) / 255.
-        if dataset_name in ['imagenet12']:
+        if dataset_name in ['imagenet12', 'imagenet12_large', 'cifar100']:
+            image = tf.cast(tf.image.decode_jpeg(image_string, channels=3), dtype=tf.float32)
             image = tf.image.resize_image_with_crop_or_pad(image, 224, 224)
         elif dataset_name in ['gtsrb', 'omniglot', 'svhn', 'daimlerpedcls']:
+            image = tf.cast(tf.image.decode_jpeg(image_string, channels=3), dtype=tf.float32) / 255.
             image = tf.image.resize_image_with_crop_or_pad(image, 72, 72)
         else:
+            image = tf.cast(tf.image.decode_jpeg(image_string, channels=3), dtype=tf.float32) / 255.
             image = tf.random_crop(image, size=[64, 64, 3])
             # flip the image with the probability of 0.5
             image = tf.image.random_flip_left_right(image)
         image = (image - means_tensor) / stds_tensor
 
         label = tf.one_hot(indices=label, depth=n_classes)
-
         return image, label
 
     @staticmethod
     def parse_image_val(file_name, label, dataset_name, means_tensor, stds_tensor, n_classes):
         image_string = tf.read_file(file_name)
-        image = tf.cast(tf.image.decode_jpeg(image_string), dtype=tf.float32) / 255.
-        if dataset_name in ['imagenet12']:
+
+        if dataset_name in ['imagenet12', 'imagenet12_large', 'cifar100']:
+            image = tf.cast(tf.image.decode_jpeg(image_string, channels=3), dtype=tf.float32)
             image = tf.image.resize_image_with_crop_or_pad(image, 224, 224)
         elif dataset_name in ['gtsrb', 'omniglot', 'svhn', 'daimlerpedcls']:
+            image = tf.cast(tf.image.decode_jpeg(image_string, channels=3), dtype=tf.float32) / 255.
             image = tf.image.resize_image_with_crop_or_pad(image, 72, 72)
         else:
+            image = tf.cast(tf.image.decode_jpeg(image_string, channels=3), dtype=tf.float32) / 255.
             image = tf.image.resize_image_with_crop_or_pad(image, 64, 64)
+
         image = (image - means_tensor) / stds_tensor
 
         label = tf.one_hot(indices=label, depth=n_classes)
         return image, label
 
     @staticmethod
-    def load_dataset(batch_size, cpu_cores, dataset_name, imgs_path, data_file='../datasets/decathlon_mean_std.pickle'):
+    def load_dataset(batch_size, cpu_cores, dataset_name, imgs_path, data_file='../datasets/datasets_mean_std.pickle'):
         handler = open(data_file, 'rb')
-        dict_mean_std = pickle.load(handler, encoding='bytes')
+        dict_mean_std = pickle.load(handler)
 
-        means = np.array(dict_mean_std[bytes(dataset_name + 'mean', encoding='utf-8')], dtype=np.float32)
+        means = np.array(dict_mean_std[dataset_name + 'mean'], dtype=np.float32)
         means_tensor = tf.constant(np.expand_dims(np.expand_dims(means, axis=0), axis=0))
-        stds = np.array(dict_mean_std[bytes(dataset_name + 'std', encoding='utf-8')], dtype=np.float32)
+        stds = np.array(dict_mean_std[dataset_name + 'std'], dtype=np.float32)
         stds_tensor = tf.constant(np.expand_dims(np.expand_dims(stds, axis=0), axis=0))
 
         imgs_path_train = imgs_path + 'train/'
         imgs_path_val = imgs_path + 'val/'
-        classes_path_list_train = np.array([imgs_path_train + x + '/' for x in sorted(os.listdir(imgs_path_train))])
-        classes_path_list_val = np.array([imgs_path_val + x + '/' for x in sorted(os.listdir(imgs_path_val))])
+
+        if dataset_name == 'imagenet12':
+            classes_path_list_train = np.array([imgs_path_train + str(x) + '/' for x in range(1000)])
+            classes_path_list_val = np.array([imgs_path_val + str(x) + '/' for x in range(1000)])
+        else:
+            classes_path_list_train = np.array([imgs_path_train + x + '/' for x in sorted(os.listdir(imgs_path_train))])
+            classes_path_list_val = np.array([imgs_path_val + x + '/' for x in sorted(os.listdir(imgs_path_val))])
         n_classes = len(classes_path_list_train)
 
         filepath_list_train = []

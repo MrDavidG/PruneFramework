@@ -8,11 +8,12 @@
 
 Description. 
 """
+import sys
+
+sys.path.append(r"/local/home/david/Remote/")
 
 from models.base_model import BaseModel
-from data_loader.image_data_generator import ImageDataGenerator
 from utils.config import process_config
-# from utils.time_stamp import print_with_time_stamp as print
 from layers.conv_layer import ConvLayer
 from layers.bn_layer import BatchNormalizeLayer
 from layers.fc_layer import FullConnectedLayer
@@ -123,24 +124,24 @@ class ResNet(BaseModel):
     # merge batch norm layer to conv layer
     def merge_batch_norm_to_conv(self):
         for layer_name in self.conv_layer_names():
-            weight = self.weight_dict.pop(self.task_name + '/' + layer_name + '/weights')
-            beta = self.weight_dict.pop(self.task_name + '/' + layer_name + '/batch_normalization/beta')
-            mean = self.weight_dict.pop(self.task_name + '/' + layer_name + '/batch_normalization/moving_mean')
-            variance = self.weight_dict.pop(self.task_name + '/' + layer_name + '/batch_normalization/moving_variance')
+            weight = self.weight_dict.pop(layer_name + '/weights')
+            beta = self.weight_dict.pop(layer_name + '/batch_normalization/beta')
+            mean = self.weight_dict.pop(layer_name + '/batch_normalization/moving_mean')
+            variance = self.weight_dict.pop(layer_name + '/batch_normalization/moving_variance')
             new_weight = weight / np.sqrt(variance)
             new_bias = beta - mean / np.sqrt(variance)
-            self.weight_dict[self.task_name + '/' + layer_name + '/weights'] = new_weight
-            self.weight_dict[self.task_name + '/' + layer_name + '/biases'] = new_bias
+            self.weight_dict[layer_name + '/weights'] = new_weight
+            self.weight_dict[layer_name + '/biases'] = new_bias
 
     def meta_val(self, meta_key):
-        meta_key_in_weight = self.task_name + '/' + meta_key
+        meta_key_in_weight = meta_key
         if meta_key_in_weight in self.weight_dict:
             return self.weight_dict[meta_key_in_weight]
         else:
             return self.meta_keys_with_default_val[meta_key]
 
     def set_meta_val(self, meta_key, meta_val):
-        meta_key_in_weight = self.task_name + '/' + meta_key
+        meta_key_in_weight = meta_key
         self.weight_dict[meta_key_in_weight] = meta_val
 
     def fetch_weight(self, sess):
@@ -157,7 +158,7 @@ class ResNet(BaseModel):
             for k, v in params_dict.items():
                 weight_dict[k.split(':')[0]] = v
         for meta_key in self.meta_keys_with_default_val.keys():
-            meta_key_in_weight = self.task_name + '/' + meta_key
+            meta_key_in_weight = meta_key
             weight_dict[meta_key_in_weight] = self.meta_val(meta_key)
         return weight_dict
 
@@ -166,26 +167,11 @@ class ResNet(BaseModel):
         self.regularizer_conv = regu_conv
         self.regularizer_fc = regu_fc
 
-    def save_weight(self, sess, save_path):
-        self.weight_dict = self.fetch_weight(sess)
-        file_handler = open(save_path, 'wb')
-        pickle.dump(self.weight_dict, file_handler)
-        file_handler.close()
-
     def is_layer_shared(self, layer_name):
-        share_key = self.task_name + '/' + layer_name + '/is_share'
+        share_key = layer_name + '/is_share'
         if share_key in self.weight_dict:
             return self.weight_dict[share_key]
         return False
-
-    def get_layer_id(self, layer_name):
-        i = 0
-        for layer in self.layers:
-            if layer.layer_name == layer_name:
-                return i
-            i += 1
-        print("layer not found!")
-        return -1
 
     def inference(self):
         self.layers.clear()
@@ -202,7 +188,7 @@ class ResNet(BaseModel):
                 # ib layer
                 if self.prune_method == 'info_bottle':
                     ib_layer = InformationBottleneckLayer(y, self.weight_dict, is_training=self.is_training,
-                                                      mask_threshold=self.prune_threshold)
+                                                          mask_threshold=self.prune_threshold)
                     self.layers.append(ib_layer)
                     y, ib_kld = ib_layer.layer_output
                     self.kl_total += ib_kld
@@ -235,15 +221,6 @@ class ResNet(BaseModel):
                 fc_layer = FullConnectedLayer(y, self.weight_dict, self.regularizer_fc)
                 self.op_logits = fc_layer.layer_output
                 self.layers.append(fc_layer)
-
-    # load dataset
-    def load_dataset(self):
-        dataset_train, dataset_val, self.total_batches_train, self.n_samples_train, self.n_samples_val = \
-            ImageDataGenerator.load_dataset(self.config.batch_size, self.config.cpu_cores, self.task_name,
-                                            self.imgs_path)
-        self.train_init, self.test_init, self.X, self.Y = ImageDataGenerator.dataset_iterator(
-            dataset_train,
-            dataset_val)
 
     def loss(self):
         entropy = tf.nn.softmax_cross_entropy_with_logits_v2(labels=self.Y, logits=self.op_logits)
@@ -282,7 +259,6 @@ class ResNet(BaseModel):
         self.optimize()
         self.evaluate()
 
-
     def train_one_epoch(self, sess, init, epoch, step):
         sess.run(init)
         total_loss = 0
@@ -308,7 +284,6 @@ class ResNet(BaseModel):
         return step
 
     def eval_once(self, sess, init, epoch):
-        #        start_time = time.time()
         sess.run(init)
         total_loss = 0
         total_correct_preds = 0
@@ -325,18 +300,22 @@ class ResNet(BaseModel):
 
         print('\nEpoch:{:d}, val_acc={:%}, val_loss={:f}'.format(epoch + 1, total_correct_preds / self.n_samples_val,
                                                                  total_loss / n_batches))
+        return total_correct_preds / self.n_samples_val
 
-    def train(self, sess, n_epochs, lr=None):
+    def train(self, sess, n_epochs, lr=None, save_acc_threshold=-1):
         if lr is not None:
             self.config.learning_rate = lr
             self.optimize()
 
         sess.run(tf.variables_initializer(self.opt.variables()))
         step = self.global_step_tensor.eval(session=sess)
+        acc_max = 0
         for epoch in range(n_epochs):
             step = self.train_one_epoch(sess, self.train_init, epoch, step)
-            self.eval_once(sess, self.test_init, epoch)
-            # 在这里就保存一次？
+            acc = self.eval_once(sess, self.test_init, epoch)
+
+            if save_acc_threshold != -1 and acc > save_acc_threshold and acc > acc_max:
+                self.save_weight(sess, 'model_weights/res_' + self.task_name + '_' + str(acc))
 
     def test(self, sess):
 
@@ -356,42 +335,47 @@ class ResNet(BaseModel):
             pass
 
         print(
-            '\nTesting {}, val_acc={:%}, val_loss={:f}'.format(self.task_name, total_correct_preds / self.n_samples_val,
+            '\nTesting {}, val_acc={:%}, val_loss={:f}'.format(self.task_name,
+                                                               total_correct_preds / self.n_samples_val,
                                                                total_loss / n_batches))
 
 
 if __name__ == '__main__':
 
     config = process_config("../configs/res_net.json")
-    gpu_config = tf.ConfigProto()
+    gpu_config = tf.ConfigProto(allow_soft_placement=True)
     gpu_config.gpu_options.allow_growth = True
-    # 'gtsrb', 'omniglot', 'svhn',
-    for task_name in ['dtd', 'cifar100', 'daimlerpedcls', 'vgg-flowers', 'ucf101', 'aircraft']:
+
+    # 'dtd', 'cifar100', 'daimlerpedcls', 'vgg-flowers', 'ucf101', 'aircraft', 'gtsrb', 'omniglot', 'svhn'
+    for task_name in ['dtd']:
+
+        list_accu_threshold = {'aircraft': .44, 'ucf101': .35, 'dtd': .277}
+        accu_threshold = list_accu_threshold.get(task_name, -1)
+
         print('training on task {:s}'.format(task_name))
         tf.reset_default_graph()
         # session for training
+        with tf.device('/gpu:1'):
+            training = tf.placeholder(dtype=tf.bool, name='training')
+            # regularizers
+            regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.001)
+            regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.01)
+
+            # Step1: Train
+            resnet = ResNet(config, task_name)#, model_path='/local/home/david/Remote/models/model_weights/res_dtd_0.2776595744680851')
+            resnet.set_global_tensor(training, regularizer_conv, regularizer_fc)
+            resnet.build()
+
         session = tf.Session(config=gpu_config)
-
-        training = tf.placeholder(dtype=tf.bool, name='training')
-        # regularizers
-        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.0001)
-        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.0005)
-
-        # Step1: Train
-        resnet = ResNet(config, task_name)
-        resnet.set_global_tensor(training, regularizer_conv, regularizer_fc)
-        resnet.build()
-
         session.run(tf.global_variables_initializer())
 
-        resnet.train(sess=session, n_epochs=80, lr=0.1)
+        resnet.train(sess=session, n_epochs=50, lr=0.01, save_acc_threshold=accu_threshold)
 
-        resnet.train(sess=session, n_epochs=20, lr=0.01)
+        # resnet.train(sess=session, n_epochs=60, lr=0.01, save_acc_threshold=accu_threshold)
 
-        resnet.train(sess=session, n_epochs=20, lr=0.001)
+        resnet.train(sess=session, n_epochs=30, lr=0.001, save_acc_threshold=accu_threshold)
+        # resnet.train(sess=session, n_epochs=20, lr=0.001)
 
         # save the model weights
-        if not os.path.exists('model_weights'):
-            os.mkdir('model_weights')
-        print('[%s] Save model weights for model res_%s' % (datetime.now(), task_name))
-        resnet.save_weight(session, 'model_weights/res_' + task_name)
+        # print('[%s] Save model weights for model res_%s' % (datetime.now(), task_name))
+        # resnet.save_weight(session, 'model_weights/res_' + task_name)

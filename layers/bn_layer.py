@@ -28,6 +28,11 @@ class BatchNormalizeLayer(BaseLayer):
                                            beta_initializer=beta, scale=False, moving_mean_initializer=mean,
                                            moving_variance_initializer=variance,
                                            beta_regularizer=regularizer_conv)
+
+        self.weight_tensors = [tf.get_variable('batch_normalization/beta'),
+                               tf.get_variable('batch_normalization/moving_mean'),
+                               tf.get_variable('batch_normalization/moving_variance')]
+
         self.layer_output = bn
         return self.layer_output
 

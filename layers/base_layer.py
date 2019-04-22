@@ -30,5 +30,6 @@ class BaseLayer:
         weight_vals = sess.run(self.weight_tensors)
         weight_dict = dict()
         for i in range(len(self.weight_tensors)):
-            weight_dict[self.weight_tensors[i].name] = weight_vals[i]
+            key = '/'.join(self.weight_tensors[i].name.split('/')[1:])
+            weight_dict[key] = weight_vals[i]
         return weight_dict

@@ -10,12 +10,14 @@
 
 Description. 
 """
+import sys
+
+sys.path.append(r"/local/home/david/Remote/")
 
 from models.base_model import BaseModel
 from layers.conv_layer import ConvLayer
 from layers.fc_layer import FullConnectedLayer
 from layers.ib_layer import InformationBottleneckLayer
-from data_loader.image_data_generator import ImageDataGenerator
 from utils.config import process_config
 from utils.time_stamp import print_with_time_stamp as print_
 
@@ -27,7 +29,7 @@ import os
 
 
 class VGGNet(BaseModel):
-    def __init__(self, config, task_name, model_path='./model_weights/vgg_pretrain.npy'):
+    def __init__(self, config, task_name, model_path='/local/home/david/Remote/models/model_weights/vgg_pretrain'):
         super(VGGNet, self).__init__(config)
 
         self.imgs_path = self.config.dataset_path + task_name + '/'
@@ -68,7 +70,7 @@ class VGGNet(BaseModel):
                                                                                size=[1,
                                                                                      dim]).astype(
                     np.float32)
-                # weight_dict[self.task_name + name_layer + '/info_bottle/epsilon'] = np.random.normal()
+
                 weight_dict[name_layer + '/info_bottle/delta'] = np.random.normal(loc=9,
                                                                                   scale=0.01,
                                                                                   size=[1,
@@ -78,14 +80,14 @@ class VGGNet(BaseModel):
         return weight_dict
 
     def meta_val(self, meta_key):
-        meta_key_in_weight = self.task_name + '/' + meta_key
+        meta_key_in_weight = meta_key
         if meta_key_in_weight in self.weight_dict:
             return self.weight_dict[meta_key_in_weight]
         else:
             return self.meta_keys_with_default_val[meta_key]
 
     def is_layer_shared(self, layer_name):
-        share_key = self.task_name + '/' + layer_name + '/is_share'
+        share_key = layer_name + '/is_share'
         if share_key in self.weight_dict:
             return self.weight_dict[share_key]
         return False
@@ -98,6 +100,7 @@ class VGGNet(BaseModel):
         self.layers.clear()
         with tf.variable_scope(self.task_name, reuse=tf.AUTO_REUSE):
             y = self.X
+
             self.kl_total = 0.
             # the name of the layer and the coefficient of the kl divergence
             for set_layer in [('conv1_1', 1.0 / 32), ('conv1_2', 1.0 / 32), 'pooling',
@@ -133,6 +136,8 @@ class VGGNet(BaseModel):
                     self.layers.append(fc_layer)
                     y = tf.nn.relu(fc_layer.layer_output)
 
+                    y = tf.layers.dropout(y, training=self.is_training)
+
                     if self.prune_method == 'info_bottle':
                         ib_layer = InformationBottleneckLayer(y, self.weight_dict, is_training=self.is_training,
                                                               mask_threshold=self.prune_threshold)
@@ -142,15 +147,7 @@ class VGGNet(BaseModel):
             with tf.variable_scope('fc8'):
                 fc_layer = FullConnectedLayer(y, self.weight_dict, regularizer_fc=self.regularizer_fc)
                 self.layers.append(fc_layer)
-                self.op_logits = fc_layer.layer_output
-
-    def load_dataset(self):
-        dataset_train, dataset_val, self.total_batches_train, self.n_samples_train, self.n_samples_val = ImageDataGenerator.load_dataset(
-            self.config.batch_size, self.config.cpu_cores, self.task_name,
-            self.imgs_path)
-        self.train_init, self.test_init, self.X, self.Y = ImageDataGenerator.dataset_iterator(
-            dataset_train,
-            dataset_val)
+                self.op_logits = tf.nn.softmax(fc_layer.layer_output)
 
     def loss(self):
         entropy = tf.nn.softmax_cross_entropy_with_logits_v2(labels=self.Y, logits=self.op_logits)
@@ -193,21 +190,29 @@ class VGGNet(BaseModel):
     def train_one_epoch(self, sess, init, epoch, step):
         sess.run(init)
         total_loss = 0
+        total_correct_preds = 0
         n_batches = 0
         time_last = time.time()
         try:
             while True:
-                _, loss = sess.run([self.op_opt, self.op_loss], feed_dict={self.is_training: True})
+                _, loss, accuracy_batch = sess.run([self.op_opt, self.op_loss, self.op_accuracy],
+                                                   feed_dict={self.is_training: True})
                 step += 1
                 total_loss += loss
+                total_correct_preds += accuracy_batch
                 n_batches += 1
 
                 if n_batches % 5 == 0:
-                    print('\repoch={:d},batch={:d}/{:d},curr_loss={:f},used_time:{:.2f}s'.format(epoch + 1, n_batches,
-                                                                                                 self.total_batches_train,
-                                                                                                 total_loss / n_batches,
-                                                                                                 time.time() - time_last),
-                          end=' ')
+                    print(
+                        '\repoch={:d}, batch={:d}/{:d}, curr_loss={:f}, train_acc={:%}, used_time:{:.2f}s'.format(
+                            epoch + 1,
+                            n_batches,
+                            self.total_batches_train,
+                            total_loss / n_batches,
+                            total_correct_preds / (n_batches * self.config.batch_size),
+                            time.time() - time_last),
+                        end=' ')
+
                     time_last = time.time()
 
         except tf.errors.OutOfRangeError:
@@ -233,18 +238,11 @@ class VGGNet(BaseModel):
             for k, v in params_dict.items():
                 weight_dict[k.split(':')[0]] = v
         for meta_key in self.meta_keys_with_default_val.keys():
-            meta_key_in_weight = self.task_name + '/' + meta_key
+            meta_key_in_weight = meta_key
             weight_dict[meta_key_in_weight] = self.meta_val(meta_key)
         return weight_dict
 
-    def save_weight(self, sess, save_path):
-        self.weight_dict = self.fetch_weight(sess)
-        file_handler = open(save_path, 'wb')
-        pickle.dump(self.weight_dict, file_handler)
-        file_handler.close()
-
     def eval_once(self, sess, init, epoch):
-        #        start_time = time.time()
         sess.run(init)
         total_loss = 0
         total_correct_preds = 0
@@ -253,30 +251,30 @@ class VGGNet(BaseModel):
             while True:
                 loss_batch, accuracy_batch = sess.run([self.op_loss, self.op_accuracy],
                                                       feed_dict={self.is_training: False})
+
                 total_loss += loss_batch
                 total_correct_preds += accuracy_batch
                 n_batches += 1
+
         except tf.errors.OutOfRangeError:
             pass
 
         print('\nEpoch:{:d}, val_acc={:%}, val_loss={:f}'.format(epoch + 1, total_correct_preds / self.n_samples_val,
                                                                  total_loss / n_batches))
+        return total_correct_preds / self.n_samples_val
 
     def train(self, sess, n_epochs, lr=None):
         if lr is not None:
             self.config.learning_rate = lr
             self.optimize()
 
+        sess.run(tf.variables_initializer(self.opt.variables()))
         step = self.global_step_tensor.eval(session=sess)
         for epoch in range(n_epochs):
             step = self.train_one_epoch(sess, self.train_init, epoch, step)
-            self.eval_once(sess, self.test_init, epoch)
-
-    def predicte(self, sess, imgs):
-        self.X = imgs
-        self.inference()
-        logits = sess.run(self.op_logits, feed_dict={self.is_training: False})
-        return logits
+            accu = self.eval_once(sess, self.test_init, epoch)
+            if epoch % 10 == 9:
+                self.save_weight(sess, 'model_weights/vgg_' + self.task_name + '_' + str(accu))
 
     def test(self, sess):
 
@@ -304,20 +302,20 @@ if __name__ == '__main__':
 
     config = process_config("../configs/vgg_net.json")
     # apply video memory dynamically
-    gpu_config = tf.ConfigProto()
+    gpu_config = tf.ConfigProto(intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True
 
-    for task_name in ['imagenet12']:
+    for task_name in ['cifar100']:
         print('training on task {:s}'.format(task_name))
         tf.reset_default_graph()
         # session for training
+
         session = tf.Session(config=gpu_config)
-        # session = tf.InteractiveSession()
-        # 标志位
+
         training = tf.placeholder(dtype=tf.bool, name='training')
 
-        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.)
-        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.)
+        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.0001)
+        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.001)
 
         # Step1: Train
         model = VGGNet(config, task_name)
@@ -325,12 +323,7 @@ if __name__ == '__main__':
         model.build()
 
         session.run(tf.global_variables_initializer())
-        #
-        model.train(sess=session, n_epochs=80, lr=0.001)
 
+        model.train(sess=session, n_epochs=10, lr=0.001)
         model.train(sess=session, n_epochs=40, lr=0.0001)
-
-        # save the model weights
-        if not os.path.exists('model_weights'):
-            os.mkdir('model_weights')
-        model.save_weight(session, 'model_weights/vgg_' + task_name)
+        model.train(sess=session, n_epochs=60, lr=0.00001)

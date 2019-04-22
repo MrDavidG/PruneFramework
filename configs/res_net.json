@@ -4,11 +4,11 @@
   "cpu_cores": 8,
   "skip_step": 100,
   "learning_rate": 0.1,
-  "dropout": false,
+  "dropout": true,
   "n_group": 3,
   "n_blocks_per_group": 4,
   "width": 32,
-  "dataset_path": "/local/home/david/decathlon-1.0/data/",
+  "dataset_path": "/local/home/david/Datasets/",
   "prune_method": "None",
   "prune_threshold": 0.01,
   "prune_kl_factor": 1e-6
