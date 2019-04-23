@@ -24,15 +24,14 @@ class ImageDataGenerator(DataGenerator):
     @staticmethod
     def parse_image_train(file_name, label, dataset_name, means_tensor, stds_tensor, n_classes):
         image_string = tf.read_file(file_name)
-
-        if dataset_name in ['imagenet12', 'imagenet12_large', 'cifar100']:
-            image = tf.cast(tf.image.decode_jpeg(image_string, channels=3), dtype=tf.float32)
+        image = tf.cast(tf.image.decode_jpeg(image_string, channels=3), dtype=tf.float32)
+        if dataset_name in ['imagenet12', 'imagenet12_large']:
             image = tf.image.resize_image_with_crop_or_pad(image, 224, 224)
         elif dataset_name in ['gtsrb', 'omniglot', 'svhn', 'daimlerpedcls']:
-            image = tf.cast(tf.image.decode_jpeg(image_string, channels=3), dtype=tf.float32) / 255.
+            image = image / 255.
             image = tf.image.resize_image_with_crop_or_pad(image, 72, 72)
         else:
-            image = tf.cast(tf.image.decode_jpeg(image_string, channels=3), dtype=tf.float32) / 255.
+            image = image / 255.
             image = tf.random_crop(image, size=[64, 64, 3])
             # flip the image with the probability of 0.5
             image = tf.image.random_flip_left_right(image)
@@ -44,15 +43,14 @@ class ImageDataGenerator(DataGenerator):
     @staticmethod
     def parse_image_val(file_name, label, dataset_name, means_tensor, stds_tensor, n_classes):
         image_string = tf.read_file(file_name)
-
-        if dataset_name in ['imagenet12', 'imagenet12_large', 'cifar100']:
-            image = tf.cast(tf.image.decode_jpeg(image_string, channels=3), dtype=tf.float32)
+        image = tf.cast(tf.image.decode_jpeg(image_string, channels=3), dtype=tf.float32)
+        if dataset_name in ['imagenet12', 'imagenet12_large']:
             image = tf.image.resize_image_with_crop_or_pad(image, 224, 224)
         elif dataset_name in ['gtsrb', 'omniglot', 'svhn', 'daimlerpedcls']:
-            image = tf.cast(tf.image.decode_jpeg(image_string, channels=3), dtype=tf.float32) / 255.
+            image = image / 255.
             image = tf.image.resize_image_with_crop_or_pad(image, 72, 72)
         else:
-            image = tf.cast(tf.image.decode_jpeg(image_string, channels=3), dtype=tf.float32) / 255.
+            image = image / 255.
             image = tf.image.resize_image_with_crop_or_pad(image, 64, 64)
 
         image = (image - means_tensor) / stds_tensor

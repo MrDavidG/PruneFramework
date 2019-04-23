@@ -94,7 +94,7 @@ class VGGNet(BaseModel):
         weight_dict['conv5_3/weights'] = weights_variable(512, [3, 3, 512, 512])
         weight_dict['conv5_3/biases'] = bias_variable([512])
         # fc layers
-        weight_dict['fc6/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / 25088), size=[25088, 4096]).astype(
+        weight_dict['fc6/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / 2048), size=[2048, 4096]).astype(
             dtype=np.float32)
         weight_dict['fc6/biases'] = bias_variable([4096])
         weight_dict['fc7/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / 4096), size=[4096, 4096]).astype(
@@ -362,7 +362,7 @@ if __name__ == '__main__':
     gpu_config = tf.ConfigProto(intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True
 
-    for task_name in ['imagenet12']:
+    for task_name in ['cifar100']:
         print('training on task {:s}'.format(task_name))
         tf.reset_default_graph()
         # session for training
@@ -371,8 +371,8 @@ if __name__ == '__main__':
 
         training = tf.placeholder(dtype=tf.bool, name='training')
 
-        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.001)
-        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.001)
+        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.005)
+        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.005)
 
         # Step1: Train
         model = VGGNet(config, task_name, model_path=None)
@@ -381,6 +381,6 @@ if __name__ == '__main__':
 
         session.run(tf.global_variables_initializer())
 
+        model.train(sess=session, n_epochs=90, lr=0.01)
         model.train(sess=session, n_epochs=40, lr=0.001)
         model.train(sess=session, n_epochs=40, lr=0.0001)
-        model.train(sess=session, n_epochs=60, lr=0.00001)
