@@ -371,8 +371,8 @@ if __name__ == '__main__':
 
         training = tf.placeholder(dtype=tf.bool, name='training')
 
-        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.001)
-        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.001)
+        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.003)
+        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.003)
 
         # Step1: Train
         model = VGGNet(config, task_name, model_path=None)

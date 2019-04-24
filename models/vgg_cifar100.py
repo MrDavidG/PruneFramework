@@ -13,7 +13,6 @@ Description.
 import sys
 
 sys.path.append(r"/local/home/david/Remote/")
-
 from models.base_model import BaseModel
 from layers.conv_layer import ConvLayer
 from layers.fc_layer import FullConnectedLayer
@@ -50,7 +49,7 @@ class VGGNet(BaseModel):
             print_('Initialize weight matrix')
             self.initial_weight = True
 
-        if self.prune_method == 'info_bottle':
+        if self.prune_method == 'info_bottle' and 'conv1_1/info_bottle/mu' not in self.weight_dict:
             self.weight_dict = dict(self.weight_dict, **self.construct_initial_weights_ib())
 
     def construct_initial_weights(self):
@@ -123,15 +122,13 @@ class VGGNet(BaseModel):
                                             'conv5_1', 'conv5_2', 'conv5_3',
                                             'fc6', 'fc7']):
                 dim = dim_list[i]
-                weight_dict[name_layer + '/info_bottle/mu'] = np.random.normal(loc=9, scale=0.01,
-                                                                               size=[1,
-                                                                                     dim]).astype(
+                weight_dict[name_layer + '/info_bottle/mu'] = np.random.normal(loc=1, scale=0.01,
+                                                                               size=[dim]).astype(
                     np.float32)
 
-                weight_dict[name_layer + '/info_bottle/delta'] = np.random.normal(loc=9,
-                                                                                  scale=0.01,
-                                                                                  size=[1,
-                                                                                        dim]).astype(
+                weight_dict[name_layer + '/info_bottle/logD'] = np.random.normal(loc=-9,
+                                                                                 scale=0.01,
+                                                                                 size=[dim]).astype(
                     np.float32)
 
         return weight_dict
@@ -174,12 +171,14 @@ class VGGNet(BaseModel):
                         self.layers.append(conv)
                         y = tf.nn.relu(conv.layer_output)
 
-                    # pruning of the method 'Information Bottleneck'
-                    if self.prune_method == 'info_bottle':
-                        ib_layer = InformationBottleneckLayer(y, self.weight_dict, is_training=self.is_training,
-                                                              kl_mult=kl_mult, mask_threshold=self.prune_threshold)
-                        y, ib_kld = ib_layer.layer_output
-                        self.kl_total += ib_kld
+                        # pruning of the method 'Information Bottleneck'
+                        if self.prune_method == 'info_bottle':
+                            ib_layer = InformationBottleneckLayer(y, layer_type='C_ib', weight_dict=self.weight_dict,
+                                                                  is_training=self.is_training,
+                                                                  kl_mult=kl_mult, mask_threshold=self.prune_threshold)
+                            self.layers.append(ib_layer)
+                            y, ib_kld = ib_layer.layer_output
+                            self.kl_total += ib_kld
 
                 else:
                     y = tf.nn.max_pool(y, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
@@ -196,8 +195,10 @@ class VGGNet(BaseModel):
                     y = tf.layers.dropout(y, training=self.is_training)
 
                     if self.prune_method == 'info_bottle':
-                        ib_layer = InformationBottleneckLayer(y, self.weight_dict, is_training=self.is_training,
+                        ib_layer = InformationBottleneckLayer(y, layer_type='F_ib', weight_dict=self.weight_dict,
+                                                              is_training=self.is_training,
                                                               mask_threshold=self.prune_threshold)
+                        self.layers.append(ib_layer)
                         y, ib_kld = ib_layer.layer_output
                         self.kl_total += ib_kld
 
@@ -247,13 +248,19 @@ class VGGNet(BaseModel):
     def train_one_epoch(self, sess, init, epoch, step):
         sess.run(init)
         total_loss = 0
+        total_kl = 0
         total_correct_preds = 0
         n_batches = 0
         time_last = time.time()
         try:
             while True:
-                _, loss, accuracy_batch = sess.run([self.op_opt, self.op_loss, self.op_accuracy],
-                                                   feed_dict={self.is_training: True})
+                if self.prune_method == 'info_bottle':
+                    _, loss, accuracy_batch, kl = sess.run([self.op_opt, self.op_loss, self.op_accuracy, self.kl_total],
+                                                           feed_dict={self.is_training: True})
+                    total_kl += kl
+                else:
+                    _, loss, accuracy_batch = sess.run([self.op_opt, self.op_loss, self.op_accuracy],
+                                                       feed_dict={self.is_training: True})
                 step += 1
                 total_loss += loss
                 total_correct_preds += accuracy_batch
@@ -261,12 +268,13 @@ class VGGNet(BaseModel):
 
                 if n_batches % 5 == 0:
                     print(
-                        '\repoch={:d}, batch={:d}/{:d}, curr_loss={:f}, train_acc={:%}, used_time:{:.2f}s'.format(
+                        '\repoch={:d}, batch={:d}/{:d}, curr_loss={:f}, train_acc={:%}, train_kl={:f}, used_time:{:.2f}s'.format(
                             epoch + 1,
                             n_batches,
                             self.total_batches_train,
                             total_loss / n_batches,
                             total_correct_preds / (n_batches * self.config.batch_size),
+                            total_kl / n_batches,
                             time.time() - time_last),
                         end=' ')
 
@@ -316,7 +324,8 @@ class VGGNet(BaseModel):
         except tf.errors.OutOfRangeError:
             pass
 
-        print('\nEpoch:{:d}, val_acc={:%}, val_loss={:f}'.format(epoch + 1, total_correct_preds / self.n_samples_val,
+        print('\nEpoch:{:d}, val_acc={:%}, val_loss={:f}'.format(epoch + 1,
+                                                                 total_correct_preds / self.n_samples_val,
                                                                  total_loss / n_batches))
         return total_correct_preds / self.n_samples_val
 
@@ -331,7 +340,10 @@ class VGGNet(BaseModel):
             step = self.train_one_epoch(sess, self.train_init, epoch, step)
             accu = self.eval_once(sess, self.test_init, epoch)
             if epoch % 10 == 9:
-                self.save_weight(sess, 'model_weights/vgg_' + self.task_name + '_' + str(accu))
+                if self.prune_method == 'info_bottle':
+                    self.save_weight(sess, 'model_weights/ib_vgg_' + self.task_name + '_' + str(accu))
+                else:
+                    self.save_weight(sess, 'model_weights/vgg_' + self.task_name + '_' + str(accu))
 
     def test(self, sess):
 
@@ -354,6 +366,52 @@ class VGGNet(BaseModel):
             '\nTesting {}, val_acc={:%}, val_loss={:f}'.format(self.task_name, total_correct_preds / self.n_samples_val,
                                                                total_loss / n_batches))
 
+    def get_CR(self):
+        # Obtain all masks
+        masks = list()
+        for layer in self.layers:
+            if layer.layer_type == 'C_ib' or layer.layer_type == 'F_ib':
+                masks += layer.get_mask(threshold=self.prune_threshold)
+
+        # how many channels/dims are prune in each layer
+        prune_state = [np.sum(mask == 0) for mask in masks]
+
+        total_params, pruned_params, remain_params = 0, 0, 0
+        # for conv layers
+        in_channels, in_pruned = 3, 0
+        for n, n_out in enumerate([64, 64,
+                                   128, 128,
+                                   256, 256, 256,
+                                   512, 512, 512,
+                                   512, 512, 512]):
+            # params between this and last layers
+            n_params = in_channels * n_out * 9
+            total_params += n_params
+            n_remain = (in_channels - in_pruned) * (n_out - prune_state[n]) * 9
+            remain_params += n_remain
+            pruned_params += n_params - n_remain
+            # for next layer
+            in_channels = n_out
+            in_pruned = prune_state[n]
+        # for fc layers
+        offset = len(prune_state) - 2
+        for n, n_out in enumerate([4096, 4096]):
+            n_params = in_channels * n_out
+            total_params += n_params
+            n_remain = (in_channels - in_pruned) * (n_out - prune_state[n + offset])
+            remain_params += n_remain
+            pruned_params += n_params - n_remain
+            # for next layer
+            in_channels = n_out
+            in_pruned = prune_state[n + offset]
+        total_params += in_channels * self.n_classes
+        remain_params += (in_channels - in_pruned) * self.n_classes
+        pruned_params += in_pruned * self.n_classes
+
+        print('total parameters: {}, pruned parameters: {}, remaining params:{}, remain/total params:{},'
+              'each layer pruned: {}'.format(total_params, pruned_params, remain_params,
+                                             float(total_params - pruned_params) / total_params, prune_state))
+
 
 if __name__ == '__main__':
 
@@ -375,12 +433,14 @@ if __name__ == '__main__':
         regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.005)
 
         # Step1: Train
-        model = VGGNet(config, task_name, model_path=None)
+        model = VGGNet(config, task_name,
+                       model_path='/local/home/david/Remote/models/model_weights/vgg_cifar100_0.6582')
         model.set_global_tensor(training, regularizer_conv, regularizer_fc)
         model.build()
 
         session.run(tf.global_variables_initializer())
 
-        model.train(sess=session, n_epochs=90, lr=0.01)
-        model.train(sess=session, n_epochs=40, lr=0.001)
-        model.train(sess=session, n_epochs=40, lr=0.0001)
+        model.get_CR()
+        # model.train(sess=session, n_epochs=50, lr=0.01)
+        # model.train(sess=session, n_epochs=40, lr=0.001)
+        # model.train(sess=session, n_epochs=40, lr=0.0001)
