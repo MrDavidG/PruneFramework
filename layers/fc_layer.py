@@ -16,17 +16,23 @@ import tensorflow as tf
 
 
 class FullConnectedLayer(BaseLayer):
-    def __init__(self, x, weight_dict=None, regularizer_fc=None):
+    def __init__(self, x, weight_dict=None, regularizer_fc=None, is_musked=False):
         super(FullConnectedLayer, self).__init__()
         self.layer_type = 'F'
-        self.create(x, weight_dict, regularizer_fc)
+        self.create(x, weight_dict, regularizer_fc, is_musked)
 
-    def create(self, x, weight_dict=None, regularizer_fc=None):
+    def create(self, x, weight_dict=None, regularizer_fc=None, is_musked=False):
         self.layer_input = x
 
         weights, biases = self.get_fc_param(weight_dict, regularizer_fc)
         self.weight_tensors = [weights, biases]
-        fc = tf.nn.bias_add(tf.matmul(x, weights), biases)
+        if is_musked:
+            musk = tf.get_variable(name="musk", initializer=weight_dict[self.layer_name + '/musk'], trainable=False)
+            fc = tf.matmul(x, weights * musk)
+        else:
+            fc = tf.matmul(x, weights)
+
+        fc = tf.nn.bias_add(fc, biases)
 
         self.layer_output = fc
         return self.layer_output

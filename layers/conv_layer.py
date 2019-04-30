@@ -15,26 +15,29 @@ import tensorflow as tf
 
 
 class ConvLayer(BaseLayer):
-    def __init__(self, x, weight_dict=None, is_dropout=False, is_training=False, regularizer_conv=None, stride=1,
-                 is_shared=False, share_scope=None, is_merge_bn=False):
+    def __init__(self, x, weight_dict=None, is_dropout=False, is_training=False, is_musked=False, regularizer_conv=None,
+                 stride=1, is_shared=False, share_scope=None, is_merge_bn=False):
         super(ConvLayer, self).__init__()
 
-
+        # With biases
         if is_merge_bn:
             # with biases
             self.layer_type = 'C'
-            self.create_merge(x, weight_dict, is_dropout, is_training, regularizer_conv, stride)
+            self.create_merge(x, weight_dict, is_dropout, is_training, is_musked, regularizer_conv, stride)
         else:
-            # without biases, but with params of batch normalization
+            # Without biases, but with params of batch normalization
             self.layer_type = 'R'
-            self.create(x, weight_dict, is_dropout, is_training, regularizer_conv, stride)
+            self.create(x, weight_dict, is_dropout, is_training, is_musked, regularizer_conv, stride)
 
-    def create(self, x, weight_dict=None, is_dropout=False, is_training=False, regularizer_conv=None, stride=1):
+    def create(self, x, weight_dict=None, is_dropout=False, is_training=False, is_musked=False, regularizer_conv=None,
+               stride=1):
         self.layer_input = x
 
         filt, beta, mean, variance = self.get_conv_filter_bn(weight_dict, regularizer_conv)
 
         conv = tf.nn.conv2d(x, filt, [1, stride, stride, 1], padding='SAME')
+        if is_musked:
+            conv = conv * weight_dict[self.layer_name + '/musk']
 
         if is_dropout:
             conv = tf.layers.dropout(conv, noise_shape=[tf.shape(conv)[0], 1, 1, tf.shape(conv)[3]],
@@ -44,13 +47,14 @@ class ConvLayer(BaseLayer):
                                            beta_initializer=beta, scale=False, moving_mean_initializer=mean,
                                            moving_variance_initializer=variance,
                                            beta_regularizer=regularizer_conv)
-        # TODO: 后三个变量哪里来的
+
         self.weight_tensors = [filt, tf.get_variable('batch_normalization/beta'),
                                tf.get_variable('batch_normalization/moving_mean'),
                                tf.get_variable('batch_normalization/moving_variance')]
         self.layer_output = bn
 
-    def create_merge(self, x, weight_dict=None, is_dropout=False, is_training=False, regularizer_conv=None, stride=1):
+    def create_merge(self, x, weight_dict=None, is_dropout=False, is_training=False, is_musked=False,
+                     regularizer_conv=None, stride=1):
         """
         create a conv layer with biases and without bn
         :param x:
@@ -63,7 +67,14 @@ class ConvLayer(BaseLayer):
         """
         self.layer_input = x
         filt, biases = self.get_conv_filter_bn_merge(weight_dict, regularizer_conv)
-        conv = tf.nn.conv2d(x, filt, [1, stride, stride, 1], padding='SAME')
+
+        if is_musked:
+            musk = tf.get_variable(name="musk", initializer=weight_dict[self.layer_name + '/musk'], trainable=False)
+            conv = tf.nn.conv2d(x, filt * musk, [1, stride, stride, 1],
+                                padding='SAME')
+        else:
+            conv = tf.nn.conv2d(x, filt, [1, stride, stride, 1], padding='SAME')
+
         conv = tf.nn.bias_add(conv, biases)
 
         if is_dropout:

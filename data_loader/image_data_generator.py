@@ -30,6 +30,9 @@ class ImageDataGenerator(DataGenerator):
         elif dataset_name in ['gtsrb', 'omniglot', 'svhn', 'daimlerpedcls']:
             image = image / 255.
             image = tf.image.resize_image_with_crop_or_pad(image, 72, 72)
+        elif dataset_name in ['cifar10']:
+            image = image / 255.
+            image = tf.random_crop(image, size=[32, 32, 3])
         else:
             image = image / 255.
             image = tf.random_crop(image, size=[64, 64, 3])
@@ -49,6 +52,9 @@ class ImageDataGenerator(DataGenerator):
         elif dataset_name in ['gtsrb', 'omniglot', 'svhn', 'daimlerpedcls']:
             image = image / 255.
             image = tf.image.resize_image_with_crop_or_pad(image, 72, 72)
+        elif dataset_name in ['cifar10']:
+            image = image / 255.
+            image = tf.random_crop(image, size=[32, 32, 3])
         else:
             image = image / 255.
             image = tf.image.resize_image_with_crop_or_pad(image, 64, 64)

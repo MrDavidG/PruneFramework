@@ -20,15 +20,19 @@ from layers.ib_layer import InformationBottleneckLayer
 from utils.config import process_config
 from utils.time_stamp import print_with_time_stamp as print_
 
-import tensorflow as tf
 import numpy as np
 import pickle
 import time
+
 import os
+import tensorflow as tf
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
 class VGGNet(BaseModel):
-    def __init__(self, config, task_name, model_path='/local/home/david/Remote/models/model_weights/vgg_pretrain'):
+    def __init__(self, config, task_name, musk=False,
+                 model_path='/local/home/david/Remote/models/model_weights/vgg_pretrain'):
         super(VGGNet, self).__init__(config)
 
         self.imgs_path = self.config.dataset_path + task_name + '/'
@@ -36,6 +40,8 @@ class VGGNet(BaseModel):
         self.meta_keys_with_default_val = {"is_merge_bn": True}
 
         self.task_name = task_name
+
+        self.is_musked = musk
 
         self.load_dataset()
         self.n_classes = self.Y.shape[1]
@@ -93,7 +99,8 @@ class VGGNet(BaseModel):
         weight_dict['conv5_3/weights'] = weights_variable(512, [3, 3, 512, 512])
         weight_dict['conv5_3/biases'] = bias_variable([512])
         # fc layers
-        weight_dict['fc6/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / 2048), size=[2048, 4096]).astype(
+        dim_fc = np.int(self.X.shape[2] // 32) ** 2 * 512
+        weight_dict['fc6/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / dim_fc), size=[dim_fc, 4096]).astype(
             dtype=np.float32)
         weight_dict['fc6/biases'] = bias_variable([4096])
         weight_dict['fc7/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / 4096), size=[4096, 4096]).astype(
@@ -165,13 +172,14 @@ class VGGNet(BaseModel):
                 if set_layer != 'pooling':
                     conv_name, kl_mult = set_layer
                     with tf.variable_scope(conv_name):
-                        conv = ConvLayer(y, self.weight_dict, self.config.dropout, self.is_training,
+                        conv = ConvLayer(y, self.weight_dict, self.config.dropout, self.is_training, self.is_musked,
                                          self.regularizer_conv, is_shared=self.is_layer_shared(conv_name),
-                                         share_scope=self.share_scope, is_merge_bn=self.meta_val('is_merge_bn'))
+                                         share_scope=self.share_scope, is_merge_bn=self.meta_val(
+                                'is_merge_bn'))
                         self.layers.append(conv)
                         y = tf.nn.relu(conv.layer_output)
 
-                        # pruning of the method 'Information Bottleneck'
+                        # Pruning of the method 'Information Bottleneck'
                         if self.prune_method == 'info_bottle':
                             ib_layer = InformationBottleneckLayer(y, layer_type='C_ib', weight_dict=self.weight_dict,
                                                                   is_training=self.is_training,
@@ -188,7 +196,8 @@ class VGGNet(BaseModel):
 
             for fc_name in ['fc6', 'fc7']:
                 with tf.variable_scope(fc_name):
-                    fc_layer = FullConnectedLayer(y, self.weight_dict, regularizer_fc=self.regularizer_fc)
+                    fc_layer = FullConnectedLayer(y, self.weight_dict, regularizer_fc=self.regularizer_fc,
+                                                  is_musked=self.is_musked)
                     self.layers.append(fc_layer)
                     y = tf.nn.relu(fc_layer.layer_output)
 
@@ -203,7 +212,9 @@ class VGGNet(BaseModel):
                         self.kl_total += ib_kld
 
             with tf.variable_scope('fc8'):
-                fc_layer = FullConnectedLayer(y, self.weight_dict, regularizer_fc=self.regularizer_fc)
+                # 最后的输出层不做剪枝
+                fc_layer = FullConnectedLayer(y, self.weight_dict, regularizer_fc=self.regularizer_fc,
+                                              is_musked=False)
                 self.layers.append(fc_layer)
                 self.op_logits = fc_layer.layer_output
 
@@ -324,10 +335,11 @@ class VGGNet(BaseModel):
         except tf.errors.OutOfRangeError:
             pass
 
+        accu = np.around(total_correct_preds / self.n_samples_val, decimals=4)
         print('\nEpoch:{:d}, val_acc={:%}, val_loss={:f}'.format(epoch + 1,
-                                                                 total_correct_preds / self.n_samples_val,
+                                                                 accu,
                                                                  total_loss / n_batches))
-        return total_correct_preds / self.n_samples_val
+        return accu
 
     def train(self, sess, n_epochs, lr=None):
         if lr is not None:
@@ -342,8 +354,10 @@ class VGGNet(BaseModel):
             if epoch % 10 == 9:
                 if self.prune_method == 'info_bottle':
                     self.save_weight(sess, 'model_weights/ib_vgg_' + self.task_name + '_' + str(accu))
-                else:
-                    self.save_weight(sess, 'model_weights/vgg_' + self.task_name + '_' + str(accu))
+                elif not self.is_musked:
+                    self.save_weight(sess,
+                                     '/local/home/david/Remote/pruning_algorithms/pruning_weights/rb_vgg_retrain_' + self.task_name + '_' + str(
+                                         accu))
 
     def test(self, sess):
 
@@ -420,7 +434,7 @@ if __name__ == '__main__':
     gpu_config = tf.ConfigProto(intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True
 
-    for task_name in ['cifar100']:
+    for task_name in ['cifar10']:
         print('training on task {:s}'.format(task_name))
         tf.reset_default_graph()
         # session for training
@@ -429,18 +443,19 @@ if __name__ == '__main__':
 
         training = tf.placeholder(dtype=tf.bool, name='training')
 
-        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.005)
-        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.005)
+        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.01)
+        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.02)
 
         # Step1: Train
         model = VGGNet(config, task_name,
-                       model_path='/local/home/david/Remote/models/model_weights/vgg_cifar100_0.6582')
+                       model_path=None)
+        # model_path='/local/home/david/Remote/models/model_weights/vgg_cifar100_0.6582')
         model.set_global_tensor(training, regularizer_conv, regularizer_fc)
         model.build()
 
         session.run(tf.global_variables_initializer())
 
-        model.get_CR()
-        # model.train(sess=session, n_epochs=50, lr=0.01)
-        # model.train(sess=session, n_epochs=40, lr=0.001)
-        # model.train(sess=session, n_epochs=40, lr=0.0001)
+        # model.get_CR()
+        model.train(sess=session, n_epochs=30, lr=0.01)
+        model.train(sess=session, n_epochs=40, lr=0.001)
+        model.train(sess=session, n_epochs=40, lr=0.0001)
