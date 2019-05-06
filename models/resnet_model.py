@@ -180,7 +180,8 @@ class ResNet(BaseModel):
 
             with tf.variable_scope('pre_conv'):
                 pre_conv_layer = ConvLayer(self.X, self.weight_dict, self.config.dropout, self.is_training,
-                                           self.regularizer_conv, is_shared=self.is_layer_shared('pre_conv'),
+                                           regularizer_conv=self.regularizer_conv,
+                                           is_shared=self.is_layer_shared('pre_conv'),
                                            share_scope=self.share_scope, is_merge_bn=self.meta_val('is_merge_bn'))
                 self.layers.append(pre_conv_layer)
                 y = pre_conv_layer.layer_output
@@ -348,7 +349,6 @@ if __name__ == '__main__':
 
     # 'dtd', 'cifar100', 'daimlerpedcls', 'vgg-flowers', 'ucf101', 'aircraft', 'gtsrb', 'omniglot', 'svhn'
     for task_name in ['dtd']:
-
         list_accu_threshold = {'aircraft': .44, 'ucf101': .35, 'dtd': .277}
         accu_threshold = list_accu_threshold.get(task_name, -1)
 
@@ -362,7 +362,8 @@ if __name__ == '__main__':
             regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.01)
 
             # Step1: Train
-            resnet = ResNet(config, task_name)#, model_path='/local/home/david/Remote/models/model_weights/res_dtd_0.2776595744680851')
+            resnet = ResNet(config,
+                            task_name)  # , model_path='/local/home/david/Remote/models/model_weights/res_dtd_0.2776595744680851')
             resnet.set_global_tensor(training, regularizer_conv, regularizer_fc)
             resnet.build()
 

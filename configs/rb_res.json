@@ -1,0 +1,13 @@
+{
+  "exp_name": "res_net",
+  "batch_size": 128,
+  "cpu_cores": 8,
+  "skip_step": 100,
+  "learning_rate": 0.1,
+  "dropout": true,
+  "n_group": 3,
+  "n_blocks_per_group": 4,
+  "width": 32,
+  "dataset_path": "/local/home/david/Datasets/",
+  "prune_method": "None"
+}

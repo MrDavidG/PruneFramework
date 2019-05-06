@@ -28,162 +28,6 @@ import tensorflow as tf
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
-# def get_mutual_information_tf(x, y, dim):
-#     # extract all different variables
-#     values_x, _ = tf.unique(x)
-#     values_y, _ = tf.unique(y)
-#
-#     n_clos = dim
-#
-#     summation = tf.constant(0, dtype=tf.float32)
-#
-#     for i in range(dim):
-#         value_x = values_x[i]
-#         for j in range(dim):
-#             value_y = values_y[j]
-#
-#             px = tf.shape(tf.where(tf.equal(x, value_x))[1]) / n_clos
-#             py = tf.shape(tf.where(tf.equal(y, value_y))[1]) / n_clos
-#
-#             # where 值等于value_x的元素在数组内的位置(或者是为True的位置)
-#             tmp0 = tf.where(tf.equal(x, value_x))[0]
-#             # 应该用in1d 有问题
-#             tmp1 = tf.equal(tmp0, tf.where(tf.equal(y, value_y)[0]))
-#             tmp2 = tf.equal(tmp1, True)
-#             tmp3 = tf.where(tmp2)[0]
-#             pxy = tf.size(tmp3) / n_clos
-#
-#             summation += tf.cond(tf.greater(pxy, 0), lambda: tf.cast(pxy * tf.log((pxy / px * py)), dtype=tf.float32),
-#                                  lambda: tf.constant(0, dtype=tf.float32))
-#
-#     return summation
-#
-#
-# def neuron_relevancy_pruning_tf(sess, model, threshold_MI=0.01, name_save='rb_model'):
-#     n_classes = model.n_classes
-#
-#     dim_list = [64, 64,
-#                 128, 128,
-#                 256, 256, 256,
-#                 512, 512, 512,
-#                 512, 512, 512,
-#                 4096, 4096]
-#
-#     layer_name_list = ['conv1_1', 'conv1_2',
-#                        'conv2_1', 'conv2_2',
-#                        'conv3_1', 'conv3_2', 'conv3_3',
-#                        'conv4_1', 'conv4_2', 'conv4_3',
-#                        'conv5_1', 'conv5_2', 'conv5_3',
-#                        'fc6', 'fc7']
-#
-#     # obtain all weights
-#     weight_dict = model.weight_dict
-#
-#     # initialize the record matrix for each layer
-#     # conv layer: [out_channel, n_classes]
-#     # fc layer: [dim, n_classes]
-#     # rele_matrix_list = list()
-#     # for dim in dim_list:
-#     #     rele_matrix_list += [np.zeros((dim, n_classes)).astype(np.float32)]
-#     #
-#     # rele_matrix_list_tf = tf.constant(np.array(rele_matrix_list))
-#
-#     rele_matrix_list = list()
-#     for i, layer in enumerate(model.layers[:-1]):
-#         layer_name = layer_name_list[i]
-#
-#         tf.print('[%s] Compute MI for layer %s' % (datetime.now(), layer_name))
-#         print('[%s] Build graph for layer %s' % (datetime.now(), layer_name))
-#
-#         # relevancy matrix for this layer
-#         rele_matrix = [list(array) for array in np.zeros(shape=(dim_list[i], n_classes))]
-#
-#         for dim_layer in range(dim_list[i]):
-#             for dim_label in range(n_classes):
-#                 if layer.layer_type == 'C':
-#                     # layer_output: [batch_size, h, w, channel_size]
-#                     neuron_output = tf.reduce_mean(layer.layer_output[:, :, :, dim_layer], axis=[1, 2])
-#                     rele_matrix[dim_layer][dim_label] = get_mutual_information_tf(neuron_output,
-#                                                                                   model.Y[:, dim_label],
-#                                                                                   model.config.batch_size)
-#                 elif layer.layer_type == 'F':
-#                     rele_matrix[dim_layer][dim_label] = get_mutual_information_tf(layer.layer_output[:, dim_layer],
-#                                                                                   model.Y[:, dim_label],
-#                                                                                   model.config.batch_size)
-#                 else:
-#                     assert (1, 2)
-#
-#         rele_matrix_bool = tf.cast(tf.greater(rele_matrix, threshold_MI), dtype=tf.float32)
-#         rele_matrix_list += [rele_matrix_bool]
-#
-#     # 得到这个list
-#
-#     print('[%s] Complete build the TF Graph' % (datetime.now()))
-#
-#     try:
-#         while True:
-#             rele_matrix_list = sess.run(rele_matrix_list, feed_dict={model.is_training: False})
-#             break
-#     except tf.errors.OutOfRangeError:
-#         pass
-#
-#     print('[%s] Musk the weights' % (datetime.now()))
-#
-#     rele_matrix_array = np.array(rele_matrix_list)
-#
-#     total_pruned = 0
-#     total_preserve = 0
-#     total_params = 0
-#     # 这个musk需要两层相乘才能得到
-#     for i, layer in enumerate(model.layers[0:-1]):
-#         layer_name = layer_name_list[i]
-#
-#         # 第一层不参与剪枝
-#         if i == 0:
-#             continue
-#
-#         musk = np.matmul(rele_matrix_array[i - 1], np.transpose(rele_matrix_array[i]))
-#         weight_dict[layer_name + '/weights'] *= musk
-#
-#         shape_weight = np.shape(weight_dict[layer_name + '/weights'])
-#
-#         n_params = np.prod(shape_weight)
-#         if len(shape_weight) == 4:
-#             n_preserve = np.prod(shape_weight[:2]) * np.sum(musk)
-#         else:
-#             n_preserve = np.sum(musk)
-#         n_pruned = n_params - n_preserve
-#
-#         total_params += n_params
-#         total_preserve += n_preserve
-#         total_pruned += n_pruned
-#
-#     # cr
-#     cr = total_preserve * 1. / total_params
-#     print('[%s]: total params: %d, pruned params: %d, preserved params: %d, cr: %f' % (datetime.now(), total_params,
-#                                                                                        total_pruned, total_preserve,
-#                                                                                        cr))
-#
-#     # accu
-#     tf.reset_default_graph()
-#
-#     session = tf.Session(config=gpu_config)
-#     training = tf.placeholder(dtype=tf.bool, name='training')
-#     regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.)
-#     regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.)
-#
-#     model_ = VGGNet(config, task_name,
-#                     model_path='/local/home/david/Remote/models/model_weights/vgg_cifar100_0.6582')
-#     model_.set_global_tensor(training, regularizer_conv, regularizer_fc)
-#     model_.build()
-#     session.run(tf.global_variables_initializer())
-#
-#     acc = model_.eval_once(session, model_.test_init, 0)
-#
-#     # save weights
-#     pickle.dump(open('./pruning_weights/' + name_save + '_' + str(acc) + '_' + str(cr), 'wb'))
-
-
 def get_mutual_information(x, y, log_base=2):
     """
     Calculate and return Mutual information between two random variables
@@ -215,19 +59,22 @@ def get_mutual_information(x, y, log_base=2):
     return summation
 
 
-def bins(array, bin=0.2, num=1000):
-    # return np.around(array / bin) * bin
-    max = np.max(array)
-    min = np.min(array)
-    width = (max - min) / num
-    if width == 0:
-        return array
-    else:
-        return (array - min) // width * width + min
+def bins(array, bin=None, num=None):
+    # return np.floor(array / bin) * bin
+    if bin != None:
+        return np.floor(array / bin) * bin
+    elif num != None:
+        max = np.max(array)
+        min = np.min(array)
+        width = (max - min) * 1. / num
+        if width == 0:
+            return array
+        else:
+            return np.floor((array - min) / width)
 
 
 def neuron_relevancy_pruning(sess, task_name, model, threshold_MI, name_save='rb_model', total_batch=1, bin=0.2,
-                             num=1000, regular_conv=0.01, regular_fc=0.01):
+                             num=100, regular_conv=0.01, regular_fc=0.01):
     dim_list = [3,
                 64, 64,
                 128, 128,
@@ -440,4 +287,4 @@ if __name__ == '__main__':
 
         # prune model
         neuron_relevancy_pruning(session, task_name, model, threshold_MI=0.02, name_save='rb_vgg_cifar10',
-                                 total_batch=1, bin=0.01, num=1000, regular_conv=0.0, regular_fc=0.0)
+                                 total_batch=1, bin=0.01, num=100, regular_conv=0.0, regular_fc=0.0)

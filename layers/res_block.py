@@ -21,13 +21,13 @@ class ResBlock:
         self.layer_input = x
         if is_ib_layer == 'info_bottle':
             self.layer_output, self.res_kld, conv_1, ib_1, conv_2, ib_2 = self.create_ib_layer(x, weight_dict,
-                                                                                              is_dropout,
-                                                                                              is_training,
-                                                                                              regularizer_conv,
-                                                                                              scale_down, is_shared,
-                                                                                              share_scope,
-                                                                                              is_merge_bn,
-                                                                                              prune_threshold)
+                                                                                               is_dropout,
+                                                                                               is_training,
+                                                                                               regularizer_conv,
+                                                                                               scale_down, is_shared,
+                                                                                               share_scope,
+                                                                                               is_merge_bn,
+                                                                                               prune_threshold)
             self.layers = [conv_1, ib_1, conv_2, ib_2]
         else:
             self.layer_output, conv_1, conv_2 = self.create(x, weight_dict, is_dropout, is_training, regularizer_conv,
@@ -43,12 +43,14 @@ class ResBlock:
         else:
             stride = 1
         with tf.variable_scope("conv_1"):
-            conv_1_layer = ConvLayer(x, weight_dict, is_dropout, is_training, regularizer_conv, stride,
+            conv_1_layer = ConvLayer(x, weight_dict, is_dropout, is_training, regularizer_conv=regularizer_conv,
+                                     stride=stride,
                                      is_shared=is_shared[0], share_scope=share_scope, is_merge_bn=is_merge_bn)
             conv_1_relu = tf.nn.relu(conv_1_layer.layer_output)
 
         with tf.variable_scope("conv_2"):
-            conv_2_layer = ConvLayer(conv_1_relu, weight_dict, is_dropout, is_training, regularizer_conv,
+            conv_2_layer = ConvLayer(conv_1_relu, weight_dict, is_dropout, is_training,
+                                     regularizer_conv=regularizer_conv,
                                      is_shared=is_shared[1],
                                      share_scope=share_scope, is_merge_bn=is_merge_bn)
         residual = x
@@ -75,8 +77,9 @@ class ResBlock:
             conv_1_relu = tf.nn.relu(conv_1_layer.layer_output)
 
             # ib layer
-            ib_1_layer = InformationBottleneckLayer(conv_1_relu, self.weight_dict, is_training=is_training, kl_mult=kl_mult,
-                                                mask_threshold=self.prune_threshold)
+            ib_1_layer = InformationBottleneckLayer(conv_1_relu, self.weight_dict, is_training=is_training,
+                                                    kl_mult=kl_mult,
+                                                    mask_threshold=self.prune_threshold)
             y_1_ib, ib_1_kld = ib_1_layer.layer_output
 
         with tf.variable_scope("conv_2"):
@@ -90,9 +93,9 @@ class ResBlock:
 
             conv_2_relu = tf.nn.relu(conv_2_layer.layer_output + residual)
 
-
             # ib layer
-            ib_2_layer = InformationBottleneckLayer(conv_2_relu, self.weight_dict, is_training=is_training, kl_mult=kl_mult,
+            ib_2_layer = InformationBottleneckLayer(conv_2_relu, self.weight_dict, is_training=is_training,
+                                                    kl_mult=kl_mult,
                                                     mask_threshold=self.prune_threshold)
             y_2_ib, ib_2_kld = ib_2_layer.layer_output
 

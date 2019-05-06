@@ -8,7 +8,7 @@
 @file: vgg_model
 @time: 2019-03-27 15:31
 
-Description. 
+Description.
 """
 import sys
 
@@ -60,7 +60,7 @@ class VGGNet(BaseModel):
 
     def construct_initial_weights(self):
         def bias_variable(shape):
-            return (np.ones(shape=shape, dtype=np.float32) / 10).astype(dtype=np.float32)
+            return (np.zeros(shape=shape, dtype=np.float32)).astype(dtype=np.float32)
 
         def weights_variable(fan_in, size):
             return np.random.normal(loc=0, scale=np.sqrt(1 / (3. * 3. * fan_in)), size=size).astype(dtype=np.float32)
@@ -201,7 +201,7 @@ class VGGNet(BaseModel):
                     self.layers.append(fc_layer)
                     y = tf.nn.relu(fc_layer.layer_output)
 
-                    y = tf.layers.dropout(y, training=self.is_training)
+                    # y = tf.layers.dropout(y, training=self.is_training)
 
                     if self.prune_method == 'info_bottle':
                         ib_layer = InformationBottleneckLayer(y, layer_type='F_ib', weight_dict=self.weight_dict,
@@ -233,8 +233,10 @@ class VGGNet(BaseModel):
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
         with tf.control_dependencies(update_ops):
             with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
-                self.opt = tf.train.MomentumOptimizer(learning_rate=self.config.learning_rate, momentum=0.9,
-                                                      use_nesterov=True)
+                # self.opt = tf.train.MomentumOptimizer(learning_rate=self.config.learning_rate, momentum=0.9,
+                #                                       use_nesterov=True)
+                self.opt = tf.train.GradientDescentOptimizer(learning_rate=self.config.learning_rate)
+
                 self.op_opt = self.opt.minimize(self.op_loss)
 
     def evaluate(self):
@@ -351,13 +353,19 @@ class VGGNet(BaseModel):
         for epoch in range(n_epochs):
             step = self.train_one_epoch(sess, self.train_init, epoch, step)
             accu = self.eval_once(sess, self.test_init, epoch)
-            if epoch % 10 == 9:
-                if self.prune_method == 'info_bottle':
-                    self.save_weight(sess, 'model_weights/ib_vgg_' + self.task_name + '_' + str(accu))
-                elif not self.is_musked:
-                    self.save_weight(sess,
-                                     '/local/home/david/Remote/pruning_algorithms/pruning_weights/rb_vgg_retrain_' + self.task_name + '_' + str(
-                                         accu))
+            # if epoch % 10 == 9:
+            #     if self.prune_method == 'info_bottle':
+            #         self.save_weight(sess, 'model_weights/ib_vgg_' + self.task_name + '_' + str(accu))
+            #     elif not self.is_musked:
+            #         self.save_weight(sess,
+            #                          '/local/home/david/Remote/pruning_algorithms/pruning_weights/rb_vgg_retrain_' + self.task_name + '_' + str(
+            #                              accu))
+            if (epoch + 1) % 100 == 0:
+                self.save_weight(sess,
+                                 '/local/home/david/Remote/models/model_weights/vgg_sgd_1000_' + self.task_name + '_' + str(
+                                     accu))
+        self.save_weight(sess,
+                         '/local/home/david/Remote/models/model_weights/vgg_sgd_1000_' + self.task_name + '_' + str(accu))
 
     def test(self, sess):
 
@@ -443,19 +451,17 @@ if __name__ == '__main__':
 
         training = tf.placeholder(dtype=tf.bool, name='training')
 
-        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.01)
-        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.02)
+        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.0)
+        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.0)
 
         # Step1: Train
-        model = VGGNet(config, task_name,
-                       model_path=None)
-        # model_path='/local/home/david/Remote/models/model_weights/vgg_cifar100_0.6582')
+        model = VGGNet(config, task_name, musk=False, model_path=None)
         model.set_global_tensor(training, regularizer_conv, regularizer_fc)
         model.build()
 
         session.run(tf.global_variables_initializer())
-
+        model.eval_once(session, model.test_init, -1)
         # model.get_CR()
-        model.train(sess=session, n_epochs=30, lr=0.01)
-        model.train(sess=session, n_epochs=40, lr=0.001)
-        model.train(sess=session, n_epochs=40, lr=0.0001)
+        model.train(sess=session, n_epochs=40, lr=0.01)
+        model.train(sess=session, n_epochs=1000, lr=0.001)
+        # model.train(sess=session, n_epochs=100, lr=0.0001)

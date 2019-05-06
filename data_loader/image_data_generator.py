@@ -33,12 +33,17 @@ class ImageDataGenerator(DataGenerator):
         elif dataset_name in ['cifar10']:
             image = image / 255.
             image = tf.random_crop(image, size=[32, 32, 3])
+        elif dataset_name in ['mnist']:
+            image = tf.cast(tf.image.decode_jpeg(image_string, channels=1), dtype=tf.float32)
+            image = image / 255.
         else:
             image = image / 255.
             image = tf.random_crop(image, size=[64, 64, 3])
             # flip the image with the probability of 0.5
             image = tf.image.random_flip_left_right(image)
-        image = (image - means_tensor) / stds_tensor
+
+        if dataset_name not in ['mnist', 'cifar10']:
+            image = (image - means_tensor) / stds_tensor
 
         label = tf.one_hot(indices=label, depth=n_classes)
         return image, label
@@ -55,11 +60,15 @@ class ImageDataGenerator(DataGenerator):
         elif dataset_name in ['cifar10']:
             image = image / 255.
             image = tf.random_crop(image, size=[32, 32, 3])
+        elif dataset_name in ['mnist']:
+            image = tf.cast(tf.image.decode_jpeg(image_string, channels=1), dtype=tf.float32)
+            image = image / 255.
         else:
             image = image / 255.
             image = tf.image.resize_image_with_crop_or_pad(image, 64, 64)
 
-        image = (image - means_tensor) / stds_tensor
+        if dataset_name not in ['mnist', 'cifar10']:
+            image = (image - means_tensor) / stds_tensor
 
         label = tf.one_hot(indices=label, depth=n_classes)
         return image, label
@@ -132,6 +141,8 @@ class ImageDataGenerator(DataGenerator):
         dataset_train = dataset_train.prefetch(buffer_size=1)
 
         dataset_val = tf.data.Dataset.from_tensor_slices((file_paths_val, labels_val))
+        dataset_train = dataset_train.shuffle(buffer_size=100000)
+
         dataset_val = dataset_val.map(
             map_func=lambda x, y: ImageDataGenerator.parse_image_val(x, y, dataset_name, means_tensor, stds_tensor,
                                                                      n_classes), num_parallel_calls=cpu_cores)
