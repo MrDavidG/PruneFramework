@@ -92,7 +92,7 @@ class ConvLayer(BaseLayer):
 
         return filt, beta, mean, variance
 
-    def get_conv_filter_bn_merge(self, weight_dict, regularizer_conv, trainable=True):
+    def get_conv_filter_bn_merge(self, weight_dict, regularizer_conv, trainable=False):
         filt = tf.get_variable(name="weights", initializer=weight_dict[self.layer_name + '/weights'],
                                regularizer=regularizer_conv, trainable=trainable)
         biases = tf.get_variable(name="biases", initializer=weight_dict[self.layer_name + '/biases'],

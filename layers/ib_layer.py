@@ -101,7 +101,7 @@ class InformationBottleneckLayer(BaseLayer):
 
     def get_mask(self, threshold=0):
         # logalpha: [dim]
-        logalpha = self.logD - tf.log(tf.pow(self.mu, 2) + 1e-8)
+        logalpha = self.weight_tensors[1] - tf.log(tf.pow(self.weight_tensors[0], 2) + 1e-8)
         mask = tf.cast(logalpha < threshold, dtype=tf.float32)
         return mask
 

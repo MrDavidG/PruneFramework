@@ -39,8 +39,8 @@ class FullConnectedLayer(BaseLayer):
 
     def get_fc_param(self, weight_dict, regularizer_fc):
         weights = tf.get_variable(name="weights", initializer=weight_dict[self.layer_name + '/weights'],
-                                  regularizer=regularizer_fc)
+                                  regularizer=regularizer_fc, trainable=True)
         biases = tf.get_variable(name="biases", initializer=weight_dict[self.layer_name + '/biases'],
-                                 regularizer=regularizer_fc)
+                                 regularizer=regularizer_fc, trainable=True)
 
         return weights, biases

@@ -96,6 +96,13 @@ def get_unique_probs(x):
 
 
 def kde_mi(hidden, labelixs, labelprobs):
+    """
+
+    :param hidden: 隐藏层的输出[batch_size, dim/channel_size]
+    :param labelixs: 每一个label在哪些instance中出现过，即[batch_size, 1]
+    :param labelprobs: 每一个label出现的概率，[dim_label]
+    :return:
+    """
     # Added Gaussian noise variance
     noise_variance = 1e-1
 
@@ -119,6 +126,13 @@ def kde_mi(hidden, labelixs, labelprobs):
 
 
 def bin_mi(hidden, labelixs, binsize=0.5):
+    """
+
+    :param hidden:
+    :param labelixs: 每一个label在哪些instance中出现过，即[batch_size, 1]
+    :param binsize:
+    :return:
+    """
     def get_h(d):
         digitized = np.floor(d / binsize).astype('int')
         # 得到的是[unique]

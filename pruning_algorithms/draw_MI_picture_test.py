@@ -84,7 +84,6 @@ def get_relu_max(sess, task_name, model):
     print('[%s] The final Min Input: %f' % (datetime.now(), min_all_input))
 
 
-
 def softmax(x, axis=-1):
     e_x = np.exp(x - np.max(x))  # same code
     return e_x / e_x.sum(axis=axis, keepdims=True)
@@ -125,13 +124,17 @@ def get_mi_with_input_label(sess, task_name, model, method, binsize, num, total_
                 # Hidden layer vector
                 if len(layer_output.shape) > 2:
                     # [batch_size, c]
-                    hidden = np.average(np.average(layer_output, axis=1), axis=1)
+                    # hidden = np.average(np.average(layer_output, axis=1), axis=1)
+                    # [batch_size, h*w*c]
+                    hidden = np.reshape(layer_output, (layer_output.shape[0], -1))
+
                 else:
                     hidden = layer_output
 
                 # MI
                 labels = np.argmax(labels_one_hot, axis=1)
                 # 符合这个label的sample为true
+                # instance的label为j的序号为true
                 labelixs = {}
                 for j in range(10):
                     labelixs[j] = labels == j
@@ -238,8 +241,8 @@ def exp(exp_config):
 
 if __name__ == '__main__':
     exp_config = {
-        '0': {'model_type': 'Vgg', 'task_name': 'cifar10', 'config': 'rb_vgg.json', 'method': 'bin',
-              'model_path': 'vgg_sgd_cifar10_0.7418', 'total_batch': 50, 'binsize': 0.4},
+        '0': {'model_type': 'Vgg', 'task_name': 'cifar10', 'config': 'rb_vgg.json', 'method': 'kde',
+              'model_path': 'vgg_sgd_cifar10_0.7421', 'total_batch': 50, 'binsize': 0.1},
 
         '1': {'model_type': 'Dense', 'task_name': 'mnist', 'config': 'dense_net.json', 'method': 'bin',
               'model_path': 'dense_mnist_0.9844', 'total_batch': 100, 'binsize': 0.5},
