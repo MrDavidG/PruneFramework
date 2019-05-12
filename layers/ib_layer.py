@@ -18,7 +18,7 @@ import numpy as np
 
 
 class InformationBottleneckLayer(BaseLayer):
-    def __init__(self, x, layer_type, weight_dict=None, is_training=False, kl_mult=1, mask_threshold=0):
+    def __init__(self, x, layer_type, weight_dict=None, is_training=False, kl_mult=2, mask_threshold=0):
         super(InformationBottleneckLayer, self).__init__()
         self.kl_mult = kl_mult
         self.layer_type = layer_type

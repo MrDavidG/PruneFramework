@@ -100,6 +100,19 @@ class BaseModel:
         print("layer not found!")
         return -1
 
+    def meta_val(self, meta_key):
+        meta_key_in_weight = meta_key
+        if meta_key_in_weight in self.weight_dict:
+            return self.weight_dict[meta_key_in_weight]
+        else:
+            return self.meta_keys_with_default_val[meta_key]
+
+    def is_layer_shared(self, layer_name):
+        share_key = layer_name + '/is_share'
+        if share_key in self.weight_dict:
+            return self.weight_dict[share_key]
+        return False
+
     @abstractmethod
     def init_saver(self):
         pass

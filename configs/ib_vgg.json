@@ -8,6 +8,6 @@
   "dataset_path": "/local/home/david/Datasets/",
   "weights_folder": "...",
   "prune_method": "info_bottle",
-  "prune_threshold": 0.05,
-  "prune_kl_factor": 1e-6
+  "prune_threshold": 0.01,
+  "prune_kl_factor": 1e-5
 }

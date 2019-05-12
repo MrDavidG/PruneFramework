@@ -20,6 +20,12 @@ import os
 
 def build_model(cluster_res_list, weight_a, weight_b):
     x = tf.placeholder()
+    num_layer = 15
+
+    input_a, input_b, input_ab = x
+
+
+
     # Layer 1
     y = ConvLayer(x, )
 

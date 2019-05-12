@@ -31,9 +31,9 @@ import tensorflow as tf
 # os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
-class VGGNet(BaseModel):
-    def __init__(self, config, task_name, musk=False, gamma=1., model_path=None):
-        super(VGGNet, self).__init__(config)
+class VGG_Combined(BaseModel):
+    def __init__(self, config, task_name, weight_a, weight_b, cluster_res_list, musk=False, gamma=1.):
+        super(VGG_Combined, self).__init__(config)
 
         self.imgs_path = self.config.dataset_path + 'celeba/'
         # conv with biases and without bn
@@ -48,38 +48,84 @@ class VGGNet(BaseModel):
         self.load_dataset()
         self.n_classes = self.Y.shape[1]
 
-        if model_path and os.path.exists(model_path):
-            # Directly load all weights
-            self.weight_dict = pickle.load(open(model_path, 'rb'))
-            print('[%s] Loading weight matrix in %s' % (datetime.now(), model_path))
-            self.initial_weight = False
-        else:
-            # Use pre-train weights in conv, but init weights in fc
-            self.weight_dict = self.construct_initial_weights()
-            print('[%s] Initialize weight matrix' % (datetime.now()))
-            self.initial_weight = True
+        self.construct_initial_weights(weight_a, weight_b, cluster_res_list)
 
         if self.prune_method == 'info_bottle' and 'conv1_1/info_bottle/mu' not in self.weight_dict.keys():
             self.weight_dict = dict(self.weight_dict, **self.construct_initial_weights_ib())
 
-    def construct_initial_weights(self, model_path='/local/home/david/Remote/datasets/vgg_imdb_pretrain_2'):
+    def construct_initial_weights(self, weight_dict_a, weight_dict_b, cluster_res_list):
         def bias_variable(shape):
             return (np.zeros(shape=shape, dtype=np.float32)).astype(dtype=np.float32)
 
-        # Weights of conv
-        weight_dict = pickle.load(open(model_path, 'rb'))
+        def weight_variable(shape, local=0, scale=1e-2):
+            return np.random.normal(local=local, scale=scale, size=shape).astype(dtype=np.float32)
 
-        # fc layers
-        dim_fc = np.int(self.X.shape[2] // 32) ** 2 * 512
-        weight_dict['fc6/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / dim_fc), size=[dim_fc, 4096]).astype(
-            dtype=np.float32)
-        weight_dict['fc6/biases'] = bias_variable([4096])
-        weight_dict['fc7/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / 4096), size=[4096, 4096]).astype(
-            np.float32)
-        weight_dict['fc7/biases'] = bias_variable([4096])
-        weight_dict['fc8/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / 4096),
-                                                      size=[4096, self.n_classes]).astype(np.float32)
-        weight_dict['fc8/biases'] = bias_variable([self.n_classes])
+        weight_dict = list()
+
+        dim_list = [64, 64,
+                    128, 128,
+                    256, 256, 256,
+                    512, 512, 512,
+                    512, 512, 521,
+                    4096, 4096, self.n_classes]
+
+        for layer_index, layer_name in enumerate(['conv1_1', 'conv1_2',
+                                                  'conv2_1', 'conv2_2',
+                                                  'conv3_1', 'conv3_2', 'conv3_3',
+                                                  'conv4_1', 'conv4_2', 'conv4_3',
+                                                  'conv5_1', 'conv5_2', 'conv5_3',
+                                                  'fc6', 'fc7', 'fc8']):
+            # All weights and biases
+            weight = np.concatenate((weight_dict_a[layer_name + '/weights'], weight_dict_b[layer_name + '/weights']),
+                                    axis=-1)
+            bias = np.concatenate((weight_dict_a[layer_name + '/biases'], weight_dict_b[layer_name + '/biases']))
+
+            if layer_index == 0:
+                weight_dict[layer_name + '/A/weights'] = weight[:, :, :, cluster_res_list[layer_index]['A']]
+                weight_dict[layer_name + '/A/biases'] = bias[cluster_res_list[layer_index]['A']]
+                weight_dict[layer_name + '/AB/weights'] = weight[:, :, :, cluster_res_list[layer_index]['AB']]
+                weight_dict[layer_name + '/AB/biases'] = bias[cluster_res_list[layer_index]['AB']]
+                weight_dict[layer_name + '/B/weights'] = weight[:, :, :, cluster_res_list[layer_index]['B']]
+                weight_dict[layer_name + '/B/biases'] = bias[cluster_res_list[layer_index]['B']]
+            else:
+                # Number of neurons in last layer in combined model
+                num_A_last_layer = len(cluster_res_list[layer_index - 1]['A'])
+                num_B_last_layer = len(cluster_res_list[layer_index - 1]['B'])
+                num_AB_from_a_last_layer = dim_list[layer_index - 1] - num_A_last_layer
+                num_AB_from_b_last_layer = dim_list[layer_index - 1] - num_B_last_layer
+
+                # Number of neurons in this layer
+                num_A = len(cluster_res_list[layer_index]['A'])
+                num_AB = len(cluster_res_list[layer_index]['AB'])
+                num_B = len(cluster_res_list[layer_index]['B'])
+
+                if layer_name.startswith('conv'):
+                    # Add new weights for neurons from original b in AB to A
+                    weight_dict[layer_name + '/A/weights'] = np.concatenate((weight[:, :, :,
+                                                                             cluster_res_list[layer_index]['A']],
+                                                                             weight_variable((3, 3,
+                                                                                              num_AB_from_b_last_layer,
+                                                                                              num_A))), axis=2)
+
+                    # Weights for neurons from original a in AB to B
+
+                    # New weights for neurons from original a in AB to B
+                    weight_dict[layer_name + '/B/weights'] = np.concatenate((weight_variable(
+                        (3, 3, num_AB_from_a_last_layer, num_B)), weight[:, :, :, cluster_res_list[layer_index]['B']]),
+                        axis=2)
+                else:
+                    weight_dict[layer_name + '/A/weights'] = np.concatenate((weight[:,
+                                                                             cluster_res_list[layer_index]['A']],
+                                                                             weight_variable(
+                                                                                 (num_AB_from_b_last_layer, num_A))),
+                                                                            axis=1)
+
+                    # AB
+
+                    weight_dict[layer_name + '/B/weights'] = np.concatenate((weight_variable(
+                        (num_AB_from_a_last_layer, num_B)), weight[:, cluster_res_list[layer_index]['B']]), axis=2)
+
+                weight_dict[layer_name + '/A/biases'] = bias[cluster_res_list[layer_index]['A']]
 
         return weight_dict
 
@@ -113,12 +159,18 @@ class VGGNet(BaseModel):
 
     def inference(self):
         """
-        build the model of VGGNet16
+        build the model of VGG_Combine
         :return:
         """
+
+        def get_conv(x, regularizer=self.regularizer_conv):
+            return ConvLayer(x, self.weight_dict, self.config.dropout,
+                             self.is_training, self.is_musked,
+                             regularizer, is_merge_bn=self.meta_val('is_mrege_bn'))
+
         self.layers.clear()
         with tf.variable_scope(self.task_name, reuse=tf.AUTO_REUSE):
-            y = self.X
+            y_A, y_B, y_AB = self.X, self.X, self.X
 
             self.kl_total = 0.
             # the name of the layer and the coefficient of the kl divergence
@@ -129,25 +181,38 @@ class VGGNet(BaseModel):
                               ('conv5_1', 1.0 / 2), ('conv5_2', 1.0 / 2), ('conv5_3', 1.0 / 2), 'pooling']:
                 if set_layer != 'pooling':
                     conv_name, kl_mult = set_layer
-                    with tf.variable_scope(conv_name):
-                        conv = ConvLayer(y, self.weight_dict, self.config.dropout, self.is_training, self.is_musked,
+                    with tf.variable_scope(conv_name + '/A'):
+                        # A
+                        conv = ConvLayer(tf.concat((y_A, y_AB), axis=-1), self.weight_dict, self.config.dropout,
+                                         self.is_training, self.is_musked,
                                          self.regularizer_conv, is_shared=self.is_layer_shared(conv_name),
-                                         share_scope=self.share_scope, is_merge_bn=self.meta_val(
-                                'is_merge_bn'))
-                        self.layers.append(conv)
-                        y = tf.nn.relu(conv.layer_output)
+                                         share_scope=self.share_scope, is_merge_bn=self.meta_val('is_mrege_bn'))
+                        y_A = tf.nn.relu(conv.layer_output)
+                    with tf.variable_scope(conv_name + '/AB'):
+                        # 其实可以分成三部分的，其中头尾都不需要regularizer,其他部分需要
+                        # 最后再合并成一个输出y_ab！！！
+                        # From A
+                        conv_A = get_conv(y_A)
+                        y_from_A = conv_A.layer_output
 
-                        # Pruning of the method 'Information Bottleneck'
-                        if self.prune_method == 'info_bottle':
-                            ib_layer = InformationBottleneckLayer(y, layer_type='C_ib', weight_dict=self.weight_dict,
-                                                                  is_training=self.is_training,
-                                                                  kl_mult=kl_mult, mask_threshold=self.prune_threshold)
-                            self.layers.append(ib_layer)
-                            y, ib_kld = ib_layer.layer_output
-                            self.kl_total += ib_kld
+                        conv_AB = get_conv(y_AB)
+                        y_from_AB = conv_AB.layer_output
+
+                        conv_B = get_conv(y_B)
+                        y_from_B = conv_B.layer_output
+
+                        y_AB = tf.nn.relu(y_from_A + y_from_AB + y_from_B)
+                    with tf.variable_scope(conv_name + '/B'):
+                        conv = ConvLayer(tf.concat((y_AB, y_B), axis=-1), self.weight_dict, self.config.dropout,
+                                         self.is_training, self.is_musked,
+                                         self.regularizer_conv, is_shared=self.is_layer_shared(conv_name),
+                                         share_scope=self.share_scope, is_merge_bn=self.meta_val('is_mrege_bn'))
+                        y_B = tf.nn.relu(conv.layer_output)
 
                 else:
-                    y = tf.nn.max_pool(y, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
+                    y_A = tf.nn.max_pool(y_A, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
+                    y_AB = tf.nn.max_pool(y_AB, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
+                    y_B = tf.nn.max_pool(y_B, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
 
             # fc layer
             y = tf.contrib.layers.flatten(y)
@@ -420,7 +485,7 @@ if __name__ == '__main__':
         regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.0)
 
         # Train
-        model = VGGNet(config, task_name, musk=False, gamma=10)
+        model = VGGNet(config, task_name, musk=False, gamma=2)
         model.set_global_tensor(training, regularizer_conv, regularizer_fc)
         model.build()
 
