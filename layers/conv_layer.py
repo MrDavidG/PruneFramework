@@ -54,7 +54,7 @@ class ConvLayer(BaseLayer):
         self.layer_output = bn
 
     def create_merge(self, x, weight_dict=None, is_dropout=False, is_training=False, is_musked=False,
-                     regularizer_conv=None, stride=1):
+                     regularizer_conv=None, trainable=True, stride=1):
         """
         create a conv layer with biases and without bn
         :param x:
@@ -66,7 +66,7 @@ class ConvLayer(BaseLayer):
         :return:
         """
         self.layer_input = x
-        filt, biases = self.get_conv_filter_bn_merge(weight_dict, regularizer_conv)
+        filt, biases = self.get_conv_filter_bn_merge(weight_dict, regularizer_conv, trainable=trainable)
 
         if is_musked:
             musk = tf.get_variable(name="musk", initializer=weight_dict[self.layer_name + '/musk'], trainable=False)
@@ -92,7 +92,7 @@ class ConvLayer(BaseLayer):
 
         return filt, beta, mean, variance
 
-    def get_conv_filter_bn_merge(self, weight_dict, regularizer_conv, trainable=False):
+    def get_conv_filter_bn_merge(self, weight_dict, regularizer_conv, trainable):
         filt = tf.get_variable(name="weights", initializer=weight_dict[self.layer_name + '/weights'],
                                regularizer=regularizer_conv, trainable=trainable)
         biases = tf.get_variable(name="biases", initializer=weight_dict[self.layer_name + '/biases'],

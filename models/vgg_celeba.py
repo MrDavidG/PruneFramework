@@ -28,7 +28,7 @@ import os
 import tensorflow as tf
 
 
-# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
 class VGGNet(BaseModel):
@@ -401,14 +401,14 @@ class VGGNet(BaseModel):
 
 
 if __name__ == '__main__':
+    config = process_config("../configs/vgg_net.json")
 
-    config = process_config("../configs/ib_vgg.json")
     # apply video memory dynamically
     gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True
 
     for task_name in ['celeba1']:
-        print('training on task {:s}'.format(task_name))
+        print('Training on task {:s}'.format(task_name))
         tf.reset_default_graph()
         # session for training
 
@@ -416,8 +416,8 @@ if __name__ == '__main__':
 
         training = tf.placeholder(dtype=tf.bool, name='training')
 
-        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.0)
-        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.0)
+        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.001)
+        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.001)
 
         # Train
         model = VGGNet(config, task_name, musk=False, gamma=10)
@@ -427,11 +427,10 @@ if __name__ == '__main__':
         session.run(tf.global_variables_initializer())
         model.eval_once(session, model.test_init, -1)
 
-        model.get_CR(session)
         model.train(sess=session, n_epochs=10, lr=0.1)
 
-        model.train(sess=session, n_epochs=100, lr=0.01)
+        model.train(sess=session, n_epochs=20, lr=0.01)
 
-        model.train(sess=session, n_epochs=80, lr=0.001)
+        model.train(sess=session, n_epochs=20, lr=0.001)
 
-        model.train(sess=session, n_epochs=80, lr=0.0001)
+        model.train(sess=session, n_epochs=20, lr=0.0001)

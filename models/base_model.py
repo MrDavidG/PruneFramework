@@ -113,6 +113,11 @@ class BaseModel:
             return self.weight_dict[share_key]
         return False
 
+    def set_global_tensor(self, training_tensor, regu_conv, regu_fc):
+        self.is_training = training_tensor
+        self.regularizer_conv = regu_conv
+        self.regularizer_fc = regu_fc
+
     @abstractmethod
     def init_saver(self):
         pass

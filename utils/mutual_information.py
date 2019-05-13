@@ -133,6 +133,7 @@ def bin_mi(hidden, labelixs, binsize=0.5):
     :param binsize:
     :return:
     """
+
     def get_h(d):
         digitized = np.floor(d / binsize).astype('int')
         # 得到的是[unique]
@@ -145,4 +146,9 @@ def bin_mi(hidden, labelixs, binsize=0.5):
     for label, ixs in labelixs.items():
         H_LAYER_GIVEN_OUTPUT += ixs.mean() * get_h(hidden[ixs, :])
 
+    # TODO: 以下为test
+    # if 1.0 / np.log(2) * H_LAYER - H_LAYER_GIVEN_OUTPUT < 0:
+    #     return 1.0 / np.log(2) * H_LAYER, 0
+    # else:
+    #     return 1.0 / np.log(2) * H_LAYER, 1.0 / np.log(2) * H_LAYER - H_LAYER_GIVEN_OUTPUT
     return 1.0 / np.log(2) * H_LAYER, 1.0 / np.log(2) * H_LAYER - H_LAYER_GIVEN_OUTPUT
