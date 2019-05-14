@@ -55,23 +55,35 @@ class VGG_Combined(BaseModel):
         self.weight_dict = self.construct_initial_weights(weight_a, weight_b, cluster_res_list)
 
         if self.prune_method == 'info_bottle' and 'conv1_1/info_bottle/mu' not in self.weight_dict.keys():
-            self.weight_dict = dict(self.weight_dict, **self.construct_initial_weights_ib())
+            self.weight_dict = dict(self.weight_dict, **self.construct_initial_weights_ib(cluster_res_list))
 
     def construct_initial_weights(self, weight_dict_a, weight_dict_b, cluster_res_list):
-        def bias_variable(shape):
-            return (np.zeros(shape=shape, dtype=np.float32)).astype(dtype=np.float32)
-
-        def weight_variable(shape, local=0, scale=1e-2):
-            return np.random.normal(loc=local, scale=scale, size=shape).astype(dtype=np.float32)
-
-        weight_dict = dict()
-
         dim_list = [64, 64,
                     128, 128,
                     256, 256, 256,
                     512, 512, 512,
                     512, 512, 512,
                     4096, 4096, self.n_classes]
+
+        def bias_variable(shape):
+            return (np.zeros(shape=shape, dtype=np.float32)).astype(dtype=np.float32)
+
+        def weight_variable(shape, local=0, scale=1e-2):
+            return np.random.normal(loc=local, scale=scale, size=shape).astype(dtype=np.float32)
+
+        def get_signal(layer_index, key):
+            return self.signal_list[layer_index][key]
+
+        def get_expand(array, step=4):
+            res_list = list()
+            for value in array:
+                res_list += [value * step + x for x in range(step)]
+            return res_list
+
+        def del_offset(list_, offset):
+            return list(np.array(list_) - offset)
+
+        weight_dict = dict()
 
         for layer_index, layer_name in enumerate(['conv1_1', 'conv1_2',
                                                   'conv2_1', 'conv2_2',
@@ -84,134 +96,168 @@ class VGG_Combined(BaseModel):
                                     axis=-1)
             bias = np.concatenate((weight_dict_a[layer_name + '/biases'], weight_dict_b[layer_name + '/biases']))
 
-            if layer_index == 0:
-                weight_dict[layer_name + '/A/weights'] = weight[:, :, :, cluster_res_list[layer_index]['A']]
-                weight_dict[layer_name + '/A/biases'] = bias[cluster_res_list[layer_index]['A']]
-                weight_dict[layer_name + '/AB/weights'] = weight[:, :, :, cluster_res_list[layer_index]['AB']]
-                weight_dict[layer_name + '/AB/biases'] = bias[cluster_res_list[layer_index]['AB']]
-                weight_dict[layer_name + '/B/weights'] = weight[:, :, :, cluster_res_list[layer_index]['B']]
-                weight_dict[layer_name + '/B/biases'] = bias[cluster_res_list[layer_index]['B']]
-            else:
-                # Number of neurons in last layer in combined model
-                num_A_last_layer = len(cluster_res_list[layer_index - 1]['A'])
-                num_B_last_layer = len(cluster_res_list[layer_index - 1]['B'])
-                num_AB_from_a_last_layer = (
-                        np.array(cluster_res_list[layer_index - 1]['AB']) < dim_list[layer_index - 1]).sum()
-                num_AB_from_b_last_layer = len(cluster_res_list[layer_index - 1]['AB']) - num_AB_from_a_last_layer
+            # Obtain neuron list
+            A = cluster_res_list[layer_index]['A']
+            AB = cluster_res_list[layer_index]['AB']
+            B = cluster_res_list[layer_index]['B']
 
-                # 全连接层需要展开
-                if layer_name == 'fc6':
-                    num_A_last_layer *= 4
-                    num_B_last_layer *= 4
-                    num_AB_from_a_last_layer *= 4
-                    num_AB_from_b_last_layer *= 4
+            if layer_index == 0:
+                # The first layer
+                if get_signal(layer_index, 'A'):
+                    weight_dict[layer_name + '/A/weights'] = weight[:, :, :, A]
+                    weight_dict[layer_name + '/A/biases'] = bias[A]
+                if get_signal(layer_index, 'AB'):
+                    weight_dict[layer_name + '/AB/weights'] = weight[:, :, :, AB]
+                    weight_dict[layer_name + '/AB/biases'] = bias[AB]
+                if get_signal(layer_index, 'B'):
+                    weight_dict[layer_name + '/B/weights'] = weight[:, :, :, B]
+                    weight_dict[layer_name + '/B/biases'] = bias[B]
+            else:
+                # Obtain neuron list of last layer
+                A_last = cluster_res_list[layer_index - 1]['A']
+                AB_last = cluster_res_list[layer_index - 1]['AB']
+                B_last = cluster_res_list[layer_index - 1]['B']
+
+                # Number of neurons in last layer in combined model
+                num_A_last_layer = len(A_last)
+                num_B_last_layer = len(B_last)
+                num_AB_from_a_last_layer = (np.array(AB_last) < dim_list[layer_index - 1]).sum()
+                num_AB_from_b_last_layer = len(AB_last) - num_AB_from_a_last_layer
 
                 # Number of neurons in this layer
-                num_A = len(cluster_res_list[layer_index]['A'])
-                num_B = len(cluster_res_list[layer_index]['B'])
-                num_AB_from_a = (np.array(cluster_res_list[layer_index]['AB']) < dim_list[layer_index]).sum()
-                num_AB_from_b = len(cluster_res_list[layer_index]['AB']) - num_AB_from_a
+                num_A = len(A)
+                num_B = len(B)
+                num_AB_from_a = (np.array(AB) < dim_list[layer_index]).sum()
+                num_AB_from_b = len(AB) - num_AB_from_a
 
+                # Init weights
                 if layer_name.startswith('conv'):
-                    # New weights for neurons from A and AB to A
-                    weight_dict[layer_name + '/A/weights'] = np.concatenate((weight[:, :, :,
-                                                                             cluster_res_list[layer_index]['A']],
-                                                                             weight_variable((3, 3,
-                                                                                              num_AB_from_b_last_layer,
-                                                                                              num_A))), axis=2)
+                    # A
+                    if get_signal(layer_index, 'A'):
+                        in_list = A_last + A_last[:num_AB_from_a_last_layer]
+                        weight_dict[layer_name + '/A/weights'] = np.concatenate((weight[:, :, in_list, :][:, :, :, A],
+                                                                                 weight_variable((3, 3,
+                                                                                                  num_AB_from_b_last_layer,
+                                                                                                  num_A))), axis=2)
 
-                    # New weights for neurons from last layer to AB
-                    # From A to AB
-                    weight_dict[layer_name + '/AB/A/weights'] = np.concatenate((weight[:, :,
-                                                                                cluster_res_list[layer_index - 1]['A'],
-                                                                                :][:, :, :,
-                                                                                cluster_res_list[layer_index]['AB'][
-                                                                                :num_AB_from_a]],
-                                                                                weight_variable((3, 3, num_A_last_layer,
-                                                                                                 num_AB_from_b))),
-                                                                               axis=-1)
-
-                    # From AB to AB
-                    weight_AB_part_a = np.concatenate((weight[:, :, cluster_res_list[layer_index - 1]['AB'][
-                                                                    :num_AB_from_a_last_layer], :][:, :, :,
-                                                       cluster_res_list[layer_index]['AB'][:num_AB_from_a]],
-                                                       weight_variable(
-                                                           (3, 3, num_AB_from_b_last_layer, num_AB_from_a))),
-                                                      axis=2)
-                    weight_AB_part_b = np.concatenate((weight_variable((3, 3, num_AB_from_a_last_layer, num_AB_from_b)),
-                                                       weight[:, :, np.array(cluster_res_list[layer_index - 1]['AB'][
-                                                                             num_AB_from_a_last_layer:]) - dim_list[
-                                                                        layer_index - 1], :][:, :, :,
-                                                       cluster_res_list[layer_index]['AB'][num_AB_from_a:]]),
-                                                      axis=2)
-                    weight_dict[layer_name + '/AB/AB/weights'] = np.concatenate((weight_AB_part_a, weight_AB_part_b),
-                                                                                axis=-1)
-
-                    # From B to AB
-                    weight_dict[layer_name + '/AB/B/weights'] = np.concatenate((weight_variable(
-                        (3, 3, num_B_last_layer, num_AB_from_a)), weight[:, :, cluster_res_list[layer_index - 1]['B'],
-                                                                  :][:, :, :,
-                                                                  cluster_res_list[layer_index]['AB'][num_AB_from_a:]]),
-                        axis=-1)
-
-                    # New weights for neurons from AB and B to B
-                    weight_dict[layer_name + '/B/weights'] = np.concatenate((weight_variable(
-                        (3, 3, num_AB_from_a_last_layer, num_B)), weight[:, :, :, cluster_res_list[layer_index]['B']]),
-                        axis=2)
-                else:
-                    # New weights for neurons from A and AB to A
-                    weight_dict[layer_name + '/A/weights'] = np.concatenate((weight[:,
-                                                                             cluster_res_list[layer_index]['A']],
-                                                                             weight_variable(
-                                                                                 (num_AB_from_b_last_layer, num_A))),
-                                                                            axis=1)
-
-                    # The output layer does not have AB
-                    if layer_name != 'fc8':
-                        # New weights for neurons from last layer to AB
+                    # AB
+                    if get_signal(layer_index, 'AB'):
                         # From A to AB
-                        weight_dict[layer_name + '/AB/A/weights'] = np.concatenate((weight[
-                                                                                    cluster_res_list[layer_index - 1][
-                                                                                        'A'], :][:,
-                                                                                    cluster_res_list[layer_index]['AB'][
-                                                                                    :num_AB_from_a]],
-                                                                                    weight_variable((num_A_last_layer,
-                                                                                                     num_AB_from_b))),
-                                                                                   axis=-1)
+                        if get_signal(layer_index, 'fromA'):
+                            weight_dict[layer_name + '/AB/A/weights'] = np.concatenate(
+                                (weight[:, :, A_last, :][:, :, :,
+                                 AB[:num_AB_from_a]],
+                                 weight_variable((3, 3,
+                                                  num_A_last_layer,
+                                                  num_AB_from_b))),
+                                axis=-1)
 
                         # From AB to AB
-                        # !!!!!从conv层到全连接层的时候，原来的512->2048,而且其中的index=i, 投影变成了[4*i, 4i+4]...整体是变成了4倍
-                        # ！！！！
-                        weight_AB_part_a = np.concatenate((weight[cluster_res_list[layer_index - 1]['AB'][
-                                                                  :num_AB_from_a_last_layer], :][:,
-                                                           cluster_res_list[layer_index]['AB'][:num_AB_from_a]],
-                                                           weight_variable((num_AB_from_b_last_layer, num_AB_from_a))),
-                                                          axis=0)
-                        weight_AB_part_b = np.concatenate((weight_variable((num_AB_from_a_last_layer, num_AB_from_b)),
-                                                           weight[cluster_res_list[layer_index - 1]['AB'][
-                                                                  num_AB_from_a_last_layer:], :][:,
-                                                           cluster_res_list[layer_index]['AB'][num_AB_from_a:]]),
-                                                          axis=0)
+                        if get_signal(layer_index, 'fromAB'):
+                            weight_AB_part_a = np.concatenate(
+                                (weight[:, :, AB_last[:num_AB_from_a_last_layer], :][:, :, :,
+                                 AB[:num_AB_from_a]],
+                                 weight_variable(
+                                     (3, 3, num_AB_from_b_last_layer, num_AB_from_a))),
+                                axis=2)
 
-                        weight_dict[layer_name + '/AB/AB/weights'] = np.concatenate(
-                            (weight_AB_part_a, weight_AB_part_b), axis=-1)
+                            # 必须是在第3个维度，并且是b model的部分的时候需要del_offset
+                            weight_AB_part_b = np.concatenate((weight_variable(
+                                (3, 3, num_AB_from_a_last_layer, num_AB_from_b)), weight[:, :, del_offset(
+                                AB_last[num_AB_from_a_last_layer:], dim_list[layer_index - 1]), :][:, :, :,
+                                                                                  AB[num_AB_from_a:]]), axis=2)
+                            weight_dict[layer_name + '/AB/AB/weights'] = np.concatenate(
+                                (weight_AB_part_a, weight_AB_part_b), axis=-1)
 
                         # From B to AB
-                        weight_dict[layer_name + '/AB/B/weights'] = np.concatenate((weight_variable(
-                            (num_B_last_layer, num_AB_from_a)), weight[cluster_res_list[layer_index - 1]['B'], :][:,
-                                                                cluster_res_list[layer_index]['AB'][num_AB_from_a:]]),
-                            axis=-1)
+                        if get_signal(layer_index, 'fromB'):
+                            weight_dict[layer_name + '/AB/B/weights'] = np.concatenate((weight_variable(
+                                (3, 3, num_B_last_layer, num_AB_from_a)), weight[:, :,
+                                                                          del_offset(B_last, dim_list[layer_index - 1]),
+                                                                          :][:, :, :, AB[num_AB_from_a:]]), axis=-1)
+
+                    # B
+                    if get_signal(layer_index, 'B'):
+                        in_list = del_offset(AB_last[num_AB_from_a_last_layer:] + B_last, dim_list[layer_index - 1])
+                        weight_dict[layer_name + '/B/weights'] = np.concatenate((weight_variable(
+                            (3, 3, num_AB_from_a_last_layer, num_B)), weight[:, :, in_list, :][:, :, :, B]), axis=2)
+
+                elif layer_name.startswith('fc'):
+                    # Fc layer
+
+                    if layer_name == 'fc6':
+                        # From conv to fc, times h*w
+                        # !!!!!从conv层到全连接层的时候，原来的512->2048,而且其中的index=i, 投影变成了[4*i, 4i+4]...整体是变成了4倍
+                        # 最后一层产生的feature map边长的平方
+                        length = 4
+                        num_A_last_layer *= length
+                        num_B_last_layer *= length
+                        num_AB_from_a_last_layer *= length
+                        num_AB_from_b_last_layer *= length
+
+                        A_last = get_expand(A_last)
+                        AB_last = get_expand(AB_last)
+                        B_last = get_expand(B_last)
+
+                    # New weights for neurons from A and AB to A
+                    if get_signal(layer_index, 'A'):
+                        in_list = A_last + AB_last[:num_AB_from_a_last_layer]
+                        weight_dict[layer_name + '/A/weights'] = np.concatenate(
+                            (weight[in_list, :][:, A], weight_variable((num_AB_from_b_last_layer, num_A))), axis=0)
+
+                    # The output layer does not have AB
+                    if get_signal(layer_index, 'AB'):
+                        # New weights for neurons from last layer to AB
+                        # From A to AB
+                        if get_signal(layer_index, 'fromA'):
+                            weight_dict[layer_name + '/AB/A/weights'] = np.concatenate((weight[A_last, :][:,
+                                                                                        AB[:num_AB_from_a]],
+                                                                                        weight_variable(
+                                                                                            (num_A_last_layer,
+                                                                                             num_AB_from_b))),
+                                                                                       axis=-1)
+
+                        # From AB to AB
+                        if get_signal(layer_index, 'fromAB'):
+                            weight_AB_part_a = np.concatenate((weight[AB_last[:num_AB_from_a_last_layer], :][:,
+                                                               AB[:num_AB_from_a]], weight_variable(
+                                (num_AB_from_b_last_layer, num_AB_from_a))), axis=0)
+
+                            offset = dim_list[layer_index - 1]
+                            if layer_name == 'fc6':
+                                # 如果是fc6,conv转化fc的话offset也得变
+                                offset *= 4
+                            weight_AB_part_b = np.concatenate((weight_variable(
+                                (num_AB_from_a_last_layer, num_AB_from_b)),
+                                                               weight[
+                                                               del_offset(AB_last[num_AB_from_a_last_layer:], offset),
+                                                               :][:,
+                                                               AB[num_AB_from_a:]]), axis=0)
+
+                            weight_dict[layer_name + '/AB/AB/weights'] = np.concatenate(
+                                (weight_AB_part_a, weight_AB_part_b), axis=-1)
+
+                        # From B to AB
+                        if get_signal(layer_index, 'fromB'):
+                            weight_dict[layer_name + '/AB/B/weights'] = np.concatenate((weight_variable(
+                                (num_B_last_layer, num_AB_from_a)), weight[
+                                                                    del_offset(B_last, dim_list[layer_index - 1]), :][:,
+                                                                    AB[num_AB_from_a:]]), axis=-1)
 
                     # New weights for neurons from AB and B to B
-                    weight_dict[layer_name + '/B/weights'] = np.concatenate((weight_variable(
-                        (num_AB_from_a_last_layer, num_B)), weight[:, cluster_res_list[layer_index]['B']]), axis=2)
+                    if get_signal(layer_index, 'B'):
+                        in_list = del_offset(AB_last[num_AB_from_a_last_layer:] + B_last, dim_list[layer_index - 1])
+                        weight_dict[layer_name + '/B/weights'] = np.concatenate(
+                            (weight_variable((num_AB_from_a_last_layer, num_B)), weight[in_list, :][:, B]), axis=0)
 
                 # Biases
-                weight_dict[layer_name + '/A/biases'] = bias[cluster_res_list[layer_index]['A']]
-                if layer_name != 'fc8':
-                    # 只有/AB/A有bias，/AB/AB和/AB/B都没有bias(效果不影响)
-                    weight_dict[layer_name + '/AB/A/biases'] = bias[cluster_res_list[layer_index]['AB']]
-                weight_dict[layer_name + '/B/biases'] = bias[cluster_res_list[layer_index]['B']]
+                if get_signal(layer_index, 'A'):
+                    weight_dict[layer_name + '/A/biases'] = bias[cluster_res_list[layer_index]['A']]
+                if get_signal(layer_index, 'AB'):
+                    if get_signal(layer_index, 'AB'):
+                        weight_dict[layer_name + '/AB/AB/biases'] = bias[cluster_res_list[layer_index]['AB']]
+                if get_signal(layer_index, 'B'):
+                    weight_dict[layer_name + '/B/biases'] = bias[cluster_res_list[layer_index]['B']]
 
         return weight_dict
 
@@ -257,224 +303,322 @@ class VGG_Combined(BaseModel):
         :return:
         """
 
+        def get_signal(layer_index, key):
+            return self.signal_list[layer_index][key]
+
         def get_conv(x, regu_conv, has_bias=True):
             if has_bias:
                 return ConvLayer(x, self.weight_dict, self.config.dropout, self.is_training, self.is_musked,
-                                 regularizer_conv=regu_conv, is_merge_bn=self.meta_val('is_mrege_bn'))
+                                 regularizer_conv=regu_conv, is_merge_bn=self.meta_val('is_merge_bn'))
             else:
                 return ConvLayer(x, self.weight_dict, self.config.dropout, self.is_training, self.is_musked,
-                                 regularizer_conv=regu_conv, is_merge_bn=self.meta_val('is_mrege_bn'), has_bias=False)
+                                 regularizer_conv=regu_conv, is_merge_bn=self.meta_val('is_merge_bn'), has_bias=False)
 
         self.layers.clear()
         with tf.variable_scope(self.task_name, reuse=tf.AUTO_REUSE):
             x = self.X
 
             self.kl_total = 0.
+
+            layer_index = 0
             # the name of the layer and the coefficient of the kl divergence
-            for layer_index, layer_set in [('conv1_1', 1.0 / 32), ('conv1_2', 1.0 / 32), 'pooling',
-                                           ('conv2_1', 1.0 / 16), ('conv2_2', 1.0 / 16), 'pooling',
-                                           ('conv3_1', 1.0 / 8), ('conv3_2', 1.0 / 8), ('conv3_3', 1.0 / 8), 'pooling',
-                                           ('conv4_1', 1.0 / 4), ('conv4_2', 1.0 / 4), ('conv4_3', 1.0 / 4), 'pooling',
-                                           ('conv5_1', 1.0 / 2), ('conv5_2', 1.0 / 2), ('conv5_3', 1.0 / 2), 'pooling']:
+            for layer_set in [('conv1_1', 1.0 / 32), ('conv1_2', 1.0 / 32), 'pooling',
+                              ('conv2_1', 1.0 / 16), ('conv2_2', 1.0 / 16), 'pooling',
+                              ('conv3_1', 1.0 / 8), ('conv3_2', 1.0 / 8), ('conv3_3', 1.0 / 8), 'pooling',
+                              ('conv4_1', 1.0 / 4), ('conv4_2', 1.0 / 4), ('conv4_3', 1.0 / 4), 'pooling',
+                              ('conv5_1', 1.0 / 2), ('conv5_2', 1.0 / 2), ('conv5_3', 1.0 / 2), 'pooling']:
                 if layer_index == 0:
                     conv_name, kl_mult = layer_set
 
-                    with tf.variable_scope(conv_name + '/A'):
-                        conv = get_conv(x, regularizer_conv=self.regularizer_conv)
-                        self.layers.append(conv)
-                        y_A = conv.layer_output
+                    # 如果有A部分的话才进行连接
+                    if get_signal(layer_index, 'A'):
+                        with tf.variable_scope(conv_name + '/A'):
+                            conv = get_conv(x, regu_conv=self.regularizer_conv)
+                            self.layers.append(conv)
+                            y_A = conv.layer_output
 
-                        if self.prune_method == 'info_bottle':
-                            ib_layer = InformationBottleneckLayer(y_A, layer_type='C_ib', weight_dict=self.weight_dict,
-                                                                  is_training=self.is_training,
-                                                                  kl_mult=kl_mult, mask_threshold=self.prune_threshold)
-                            self.layers.append(ib_layer)
-                            y_A, ib_kld = ib_layer.layer_output
-                            self.kl_total += ib_kld
+                            if self.prune_method == 'info_bottle':
+                                ib_layer = InformationBottleneckLayer(y_A, layer_type='C_ib',
+                                                                      weight_dict=self.weight_dict,
+                                                                      is_training=self.is_training,
+                                                                      kl_mult=kl_mult,
+                                                                      mask_threshold=self.prune_threshold)
+                                self.layers.append(ib_layer)
+                                y_A, ib_kld = ib_layer.layer_output
+                                self.kl_total += ib_kld
 
-                    with tf.variable_scope(conv_name + '/AB'):
-                        conv = get_conv(x, regularizer_conv=self.regularizer_conv)
-                        self.layers.append(conv)
-                        y_AB = conv.layer_output
+                    if get_signal(layer_index, 'AB'):
+                        with tf.variable_scope(conv_name + '/AB'):
+                            conv = get_conv(x, regu_conv=self.regularizer_conv)
+                            self.layers.append(conv)
+                            y_AB = conv.layer_output
 
-                        if self.prune_method == 'info_bottle':
-                            ib_layer = InformationBottleneckLayer(y_AB, layer_type='C_ib', weight_dict=self.weight_dict,
-                                                                  is_training=self.is_training,
-                                                                  kl_mult=kl_mult, mask_threshold=self.prune_threshold)
-                            self.layers.append(ib_layer)
-                            y_AB, ib_kld = ib_layer.layer_output
-                            self.kl_total += ib_kld
+                            if self.prune_method == 'info_bottle':
+                                ib_layer = InformationBottleneckLayer(y_AB, layer_type='C_ib',
+                                                                      weight_dict=self.weight_dict,
+                                                                      is_training=self.is_training,
+                                                                      kl_mult=kl_mult,
+                                                                      mask_threshold=self.prune_threshold)
+                                self.layers.append(ib_layer)
+                                y_AB, ib_kld = ib_layer.layer_output
+                                self.kl_total += ib_kld
 
-                    with tf.variable_scope(conv_name + '/B'):
-                        conv = get_conv(x, regularizer_conv=self.regularizer_conv)
-                        self.layers.append(conv)
-                        y_B = conv.layer_output
+                    if get_signal(layer_index, 'B'):
+                        with tf.variable_scope(conv_name + '/B'):
+                            conv = get_conv(x, regu_conv=self.regularizer_conv)
+                            self.layers.append(conv)
+                            y_B = conv.layer_output
 
-                        if self.prune_method == 'info_bottle':
-                            ib_layer = InformationBottleneckLayer(y_B, layer_type='C_ib', weight_dict=self.weight_dict,
-                                                                  is_training=self.is_training,
-                                                                  kl_mult=kl_mult, mask_threshold=self.prune_threshold)
-                            self.layers.append(ib_layer)
-                            y_B, ib_kld = ib_layer.layer_output
-                            self.kl_total += ib_kld
+                            if self.prune_method == 'info_bottle':
+                                ib_layer = InformationBottleneckLayer(y_B, layer_type='C_ib',
+                                                                      weight_dict=self.weight_dict,
+                                                                      is_training=self.is_training,
+                                                                      kl_mult=kl_mult,
+                                                                      mask_threshold=self.prune_threshold)
+                                self.layers.append(ib_layer)
+                                y_B, ib_kld = ib_layer.layer_output
+                                self.kl_total += ib_kld
+
+                    layer_index += 1
 
                 elif layer_set != 'pooling':
                     conv_name, kl_mult = layer_set
 
                     # A
-                    with tf.variable_scope(conv_name + '/A'):
-                        # From A and AB to A
-                        conv = get_conv(tf.concat((y_A_last, y_AB_last), axis=-1), self.regularizer_conv)
-                        self.layers.append(conv)
-                        y_A = tf.nn.relu(conv.layer_output)
+                    if get_signal(layer_index, 'A'):
+                        with tf.variable_scope(conv_name + '/A'):
+
+                            if get_signal(layer_index, 'fromA') and get_signal(layer_index, 'fromAB'):
+                                # From A and AB to A
+                                conv = get_conv(tf.concat((y_A_last, y_AB_last), axis=-1), self.regularizer_conv)
+                            elif get_signal(layer_index, 'fromAB'):
+                                # Only AB to A
+                                conv = get_conv(y_AB_last, self.regularizer_conv)
+                            elif get_signal(layer_index, 'fromA'):
+                                # Only A to A
+                                conv = get_conv(y_A_last, self.regularizer_conv)
+                            self.layers.append(conv)
+                            y_A = tf.nn.relu(conv.layer_output)
+
+                            if self.prune_method == 'info_bottle':
+                                ib_layer = InformationBottleneckLayer(y_A, layer_type='C_ib',
+                                                                      weight_dict=self.weight_dict,
+                                                                      is_training=self.is_training,
+                                                                      kl_mult=kl_mult,
+                                                                      mask_threshold=self.prune_threshold)
+                                self.layers.append(ib_layer)
+                                y_A, ib_kld = ib_layer.layer_output
+                                self.kl_total += ib_kld
+
+                    # AB
+                    if get_signal(layer_index, 'AB'):
+                        with tf.variable_scope(conv_name + '/AB'):
+                            y_from_A, y_from_AB, y_from_B = 0, 0, 0
+                            if get_signal(layer_index, 'A'):
+                                with tf.variable_scope('A'):
+                                    # From A to AB
+                                    conv_A = get_conv(y_A_last, self.regularizer_decay, has_bias=False)
+                                    self.layers.append(conv_A)
+                                    y_from_A = conv_A.layer_output
+
+                            if get_signal(layer_index, 'AB'):
+                                with tf.variable_scope('AB'):
+                                    # From AB to AB
+                                    conv_AB = get_conv(y_AB_last, self.regularizer_conv)
+                                    self.layers.append(conv_AB)
+                                    y_from_AB = conv_AB.layer_output
+
+                            if get_signal(layer_index, 'B'):
+                                with tf.variable_scope('B'):
+                                    # From B to AB
+                                    conv_B = get_conv(y_B_last, self.regularizer_decay, has_bias=False)
+                                    self.layers.append(conv_B)
+                                    y_from_B = conv_B.layer_output
+
+                            y_AB = tf.nn.relu(y_from_A + y_from_AB + y_from_B)
+
+                            if self.prune_method == 'info_bottle':
+                                ib_layer = InformationBottleneckLayer(y_AB, layer_type='C_ib', weight_dict=self.weight_dict,
+                                                                      is_training=self.is_training,
+                                                                      kl_mult=kl_mult, mask_threshold=self.prune_threshold)
+                                self.layers.append(ib_layer)
+                                y_AB, ib_kld = ib_layer.layer_output
+                                self.kl_total += ib_kld
+
+                    # B
+                    if get_signal(layer_index, 'B'):
+                        with tf.variable_scope(conv_name + '/B'):
+                            if get_signal(layer_index, 'fromAB') and get_signal(layer_index, 'fromB'):
+                                # From AB and B to B
+                                conv = get_conv(tf.concat((y_AB_last, y_B_last), axis=-1), self.regularizer_conv)
+                            elif get_signal(layer_index, 'fromAB'):
+                                # Only AB to B
+                                conv = get_conv(y_AB_last, self.regularizer_conv)
+                            elif get_signal(layer_index, 'fromB'):
+                                # Only B to B
+                                conv = get_conv(y_A_last, self.regularizer_conv)
+                            self.layers.append(conv)
+                            y_B = tf.nn.relu(conv.layer_output)
+
+                            if self.prune_method == 'info_bottle':
+                                ib_layer = InformationBottleneckLayer(y_B, layer_type='C_ib',
+                                                                      weight_dict=self.weight_dict,
+                                                                      is_training=self.is_training,
+                                                                      kl_mult=kl_mult,
+                                                                      mask_threshold=self.prune_threshold)
+                                self.layers.append(ib_layer)
+                                y_B, ib_kld = ib_layer.layer_output
+                                self.kl_total += ib_kld
+
+                    layer_index += 1
+
+                else:
+                    if get_signal(layer_index, 'A'):
+                        y_A = tf.nn.max_pool(y_A_last, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
+                    if get_signal(layer_index, 'AB'):
+                        y_AB = tf.nn.max_pool(y_AB_last, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
+                    if get_signal(layer_index, 'A'):
+                        y_B = tf.nn.max_pool(y_B_last, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
+
+                # Record the output of last layer
+                if get_signal(layer_index, 'A'):
+                    y_A_last = y_A
+                if get_signal(layer_index, 'AB'):
+                    y_AB_last = y_AB
+                if get_signal(layer_index, 'B'):
+                    y_B_last = y_B
+
+            # From conv to fc layer
+            if get_signal(layer_index, 'A'):
+                y_A_last = tf.contrib.layers.flatten(y_A_last)
+            if get_signal(layer_index, 'AB'):
+                y_AB_last = tf.contrib.layers.flatten(y_AB_last)
+            if get_signal(layer_index, 'B'):
+                y_B_last = tf.contrib.layers.flatten(y_B_last)
+
+            for fc_name in ['fc6', 'fc7']:
+                # A
+                if get_signal(layer_index, 'A'):
+                    with tf.variable_scope(fc_name + '/A'):
+                        if get_signal(layer_index, 'fromA') and get_signal(layer_index, 'fromAB'):
+                            fc_layer = FullConnectedLayer(tf.concat((y_A_last, y_AB_last), axis=-1), self.weight_dict,
+                                                          regularizer_fc=self.regularizer_fc)
+                        elif get_signal(layer_index, 'fromAB'):
+                            fc_layer = FullConnectedLayer(y_AB_last, self.weight_dict,
+                                                          regularizer_fc=self.regularizer_fc)
+                        elif get_signal(layer_index, 'fromA'):
+                            fc_layer = FullConnectedLayer(y_A_last, self.weight_dict,
+                                                          regularizer_fc=self.regularizer_fc)
+
+                        self.layers.append(fc_layer)
+                        y_A = tf.nn.relu(fc_layer.layer_output)
 
                         if self.prune_method == 'info_bottle':
-                            ib_layer = InformationBottleneckLayer(y_A, layer_type='C_ib', weight_dict=self.weight_dict,
+                            ib_layer = InformationBottleneckLayer(y_A, layer_type='F_ib', weight_dict=self.weight_dict,
                                                                   is_training=self.is_training,
                                                                   kl_mult=kl_mult, mask_threshold=self.prune_threshold)
                             self.layers.append(ib_layer)
                             y_A, ib_kld = ib_layer.layer_output
                             self.kl_total += ib_kld
 
-                    # AB
-                    with tf.variable_scope(conv_name + '/AB'):
-                        with tf.variable_scope(conv_name + '/A'):
-                            # From A to AB
-                            conv_A = get_conv(y_A_last, self.regularizer_decay)
-                            self.layers.append(conv_A)
-                            y_from_A = conv_A.layer_output
+                # AB
+                if get_signal(layer_index, 'AB'):
+                    with tf.variable_scope(fc_name + '/AB'):
+                        y_from_A, y_from_AB, y_from_B = 0, 0, 0
+                        if get_signal(layer_index, 'fromA'):
+                            with tf.variable_scope('A'):
+                                # From A to AB
+                                fc_layer_A = FullConnectedLayer(y_A_last, self.weight_dict,
+                                                                regularizer_fc=self.regularizer_decay, has_bias=False)
+                                self.layers.append(fc_layer_A)
+                                y_from_A = fc_layer_A.layer_output
 
-                        with tf.variable_scope(conv_name + '/AB'):
-                            # From AB to AB
-                            conv_AB = get_conv(y_AB_last, self.regularizer_conv)
-                            self.layers.append(conv_AB)
-                            y_from_AB = conv_AB.layer_output
+                        if get_signal(layer_index, 'fromAB'):
+                            with tf.variable_scope('AB'):
+                                # From AB to AB
+                                fc_layer_AB = FullConnectedLayer(y_AB_last, self.weight_dict,
+                                                                 regularizer_fc=self.regularizer_fc)
+                                self.layers.append(fc_layer_AB)
+                                y_from_AB = fc_layer_AB.layer_output
 
-                        with tf.variable_scope(conv_name + '/B'):
-                            # From B to AB
-                            conv_B = get_conv(y_B_last, self.regularizer_decay)
-                            self.layers.append(conv_B)
-                            y_from_B = conv_B.layer_output
+                        if get_signal(layer_index, 'fromB'):
+                            with tf.variable_scope('B'):
+                                # From B to AB
+                                fc_layer_B = FullConnectedLayer(y_B_last, self.weight_dict,
+                                                                regularizer_fc=self.regularizer_decay, has_bias=False)
+                                self.layers.append(fc_layer_B)
+                                y_from_B = fc_layer_B.layer_output
 
                         y_AB = tf.nn.relu(y_from_A + y_from_AB + y_from_B)
 
                         if self.prune_method == 'info_bottle':
-                            ib_layer = InformationBottleneckLayer(y_AB, layer_type='C_ib', weight_dict=self.weight_dict,
+                            ib_layer = InformationBottleneckLayer(y_AB, layer_type='F_ib', weight_dict=self.weight_dict,
                                                                   is_training=self.is_training,
                                                                   kl_mult=kl_mult, mask_threshold=self.prune_threshold)
                             self.layers.append(ib_layer)
                             y_AB, ib_kld = ib_layer.layer_output
                             self.kl_total += ib_kld
 
-                    # B
-                    with tf.variable_scope(conv_name + '/B'):
-                        # From AB and B to B
-                        conv = get_conv(tf.concat((y_AB_last, y_B_last), axis=-1), self.regularizer_conv)
-                        self.layers.append(conv)
-                        y_B = tf.nn.relu(conv.layer_output)
+                # B
+                if get_signal(layer_index, 'B'):
+                    with tf.variable_scope(fc_name + '/B'):
+                        if get_signal(layer_index, 'fromAB') and get_signal(layer_index, 'fromB'):
+                            fc_layer = FullConnectedLayer(tf.concat((y_AB_last, y_B_last), axis=-1), self.weight_dict,
+                                                          regularizer_fc=self.regularizer_fc)
+                        elif get_signal(layer_index, 'fromAB'):
+                            fc_layer = FullConnectedLayer(y_AB_last, self.weight_dict,
+                                                          regularizer_fc=self.regularizer_fc)
+                        elif get_signal(layer_index, 'fromB'):
+                            fc_layer = FullConnectedLayer(y_B_last, self.weight_dict,
+                                                          regularizer_fc=self.regularizer_fc)
+                        y_B = tf.nn.relu(fc_layer.layer_output)
 
                         if self.prune_method == 'info_bottle':
-                            ib_layer = InformationBottleneckLayer(y_B, layer_type='C_ib', weight_dict=self.weight_dict,
+                            ib_layer = InformationBottleneckLayer(y_B, layer_type='F_ib', weight_dict=self.weight_dict,
                                                                   is_training=self.is_training,
                                                                   kl_mult=kl_mult, mask_threshold=self.prune_threshold)
                             self.layers.append(ib_layer)
                             y_B, ib_kld = ib_layer.layer_output
                             self.kl_total += ib_kld
 
-                else:
-                    y_A = tf.nn.max_pool(y_A, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
-                    y_AB = tf.nn.max_pool(y_AB, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
-                    y_B = tf.nn.max_pool(y_B, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
-
                 # Record the output of last layer
-                y_A_last, y_AB_last, y_B_last = y_A, y_AB, y_B
+                if get_signal(layer_index, 'A'):
+                    y_A_last = y_A
+                if get_signal(layer_index, 'AB'):
+                    y_AB_last = y_AB
+                if get_signal(layer_index, 'B'):
+                    y_B_last = y_B
 
-            # From conv to fc layer
-            y_A_last, y_AB_last, y_B_last = [tf.contrib.layers.flatten(layer_output) for layer_output in
-                                             [y_A_last, y_AB_last, y_B_last]]
-
-            for fc_name in ['fc6', 'fc7']:
-                # A
-                with tf.variable_scope(fc_name + '/A'):
-                    fc_layer = FullConnectedLayer(tf.concat((y_A_last, y_AB_last), axis=-1), self.weight_dict,
-                                                  regularizer_fc=self.regularizer_fc)
-                    self.layers.append(fc_layer)
-                    y_A = tf.nn.relu(fc_layer.layer_output)
-
-                    if self.prune_method == 'info_bottle':
-                        ib_layer = InformationBottleneckLayer(y_A, layer_type='F_ib', weight_dict=self.weight_dict,
-                                                              is_training=self.is_training,
-                                                              kl_mult=kl_mult, mask_threshold=self.prune_threshold)
-                        self.layers.append(ib_layer)
-                        y_A, ib_kld = ib_layer.layer_output
-                        self.kl_total += ib_kld
-
-                # AB
-                with tf.variable_scope(fc_name + '/AB'):
-                    with tf.variable_scope(fc_name + '/A'):
-                        # From A to AB
-                        fc_layer_A = FullConnectedLayer(y_A_last, self.weight_dict,
-                                                        regularizer_fc=self.regularizer_decay)
-                        self.layers.append(fc_layer_A)
-                        y_from_A = fc_layer_A.layer_output
-
-                    with tf.variable_scope(fc_name + 'AB'):
-                        # From AB to AB
-                        fc_layer_AB = FullConnectedLayer(y_AB_last, self.weight_dict,
-                                                         regularizer_fc=self.regularizer_fc)
-                        self.layers.append(fc_layer_AB)
-                        y_from_AB = fc_layer_AB.layer_output
-
-                    with tf.variable_scope(fc_name + '/B'):
-                        # From B to AB
-                        fc_layer_B = FullConnectedLayer(y_B_last, self.weight_dict,
-                                                        regularizer_fc=self.regularizer_decay)
-                        self.layers.append(fc_layer_B)
-                        y_from_B = fc_layer_B.layer_output
-
-                    y_AB = tf.nn.relu(y_from_A + y_from_AB + y_from_B)
-
-                    if self.prune_method == 'info_bottle':
-                        ib_layer = InformationBottleneckLayer(y_AB, layer_type='F_ib', weight_dict=self.weight_dict,
-                                                              is_training=self.is_training,
-                                                              kl_mult=kl_mult, mask_threshold=self.prune_threshold)
-                        self.layers.append(ib_layer)
-                        y_AB, ib_kld = ib_layer.layer_output
-                        self.kl_total += ib_kld
-
-                # B
-                with tf.variable_scope(fc_name + '/B'):
-                    fc_layer = FullConnectedLayer(tf.concat((y_AB_last, y_B_last), axis=-1), self.weight_dict,
-                                                  regularizer_fc=self.regularizer_fc)
-                    y_B = tf.nn.relu(fc_layer.layer_output)
-
-                    if self.prune_method == 'info_bottle':
-                        ib_layer = InformationBottleneckLayer(y_B, layer_type='F_ib', weight_dict=self.weight_dict,
-                                                              is_training=self.is_training,
-                                                              kl_mult=kl_mult, mask_threshold=self.prune_threshold)
-                        self.layers.append(ib_layer)
-                        y_B, ib_kld = ib_layer.layer_output
-                        self.kl_total += ib_kld
-
-                # Record the output of last layer
-                y_A_last, y_AB_last, y_B_last = y_A, y_AB, y_B
+                layer_index += 1
 
             with tf.variable_scope('fc8'):
                 # A
-                with tf.variable_scope(fc_name + '/A'):
-                    fc_layer = FullConnectedLayer(tf.concat((y_A_last, y_AB_last), axis=-1), self.weight_dict,
-                                                  regularizer_fc=self.regularizer_fc)
+                with tf.variable_scope('A'):
+                    if get_signal(layer_index, 'fromA') and get_signal(layer_index, 'fromAB'):
+                        fc_layer = FullConnectedLayer(tf.concat((y_A_last, y_AB_last), axis=-1), self.weight_dict,
+                                                      regularizer_fc=self.regularizer_fc)
+                    elif get_signal(layer_index, 'fromA'):
+                        fc_layer = FullConnectedLayer(y_A_last, self.weight_dict, regularizer_fc=self.regularizer_fc)
+                    elif get_signal(layer_index, 'fromAB'):
+                        fc_layer = FullConnectedLayer(y_AB_last, self.weight_dict, regularizer_fc=self.regularizer_fc)
+
                     self.layers.append(fc_layer)
                     y_A = fc_layer.layer_output
 
                 # B
-                with tf.variable_scope(fc_name + '/A'):
-                    fc_layer = FullConnectedLayer(tf.concat((y_A_last, y_AB_last), axis=-1), self.weight_dict,
-                                                  regularizer_fc=self.regularizer_fc)
+                with tf.variable_scope('B'):
+                    if get_signal(layer_index, 'fromAB') and get_signal(layer_index, 'fromB'):
+                        fc_layer = FullConnectedLayer(tf.concat((y_AB_last, y_B_last), axis=-1), self.weight_dict,
+                                                      regularizer_fc=self.regularizer_fc)
+                    elif get_signal(layer_index, 'fromAB'):
+                        fc_layer = FullConnectedLayer(y_AB_last, self.weight_dict, regularizer_fc=self.regularizer_fc)
+                    elif get_signal(layer_index, 'fromB'):
+                        fc_layer = FullConnectedLayer(y_B_last, self.weight_dict, regularizer_fc=self.regularizer_fc)
+
                     self.layers.append(fc_layer)
                     y_B = fc_layer.layer_output
 
-                self.op_logits = tf.nn.tanh(tf.concat((y_A, y_B)))
+                self.op_logits = tf.nn.tanh(tf.concat((y_A, y_B), axis=1))
                 self.op_logits_a = tf.nn.tanh(y_A)
                 self.op_logits_b = tf.nn.tanh(y_B)
 

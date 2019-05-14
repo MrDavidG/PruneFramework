@@ -10,7 +10,11 @@
 
 Description. 
 """
-from utils.mutual_information import kde_mi, bin_mi, kde_mi_independent
+import sys
+
+sys.path.append(r"/local/home/david/Remote/")
+
+from utils.mutual_information import kde_mi, bin_mi, kde_mi_independent, kde_mi_cus
 from models.vgg_mi import VGG_Combined
 from models.vgg_celeba import VGGNet
 from utils.config import process_config
@@ -22,10 +26,13 @@ import pickle
 import os
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4b0856cd-c698-63a2-0b6e-9a33d380f9c4'
 
 
-def argmin_mi(layer_output, labelixs, method_mi, binsize, labelprobs=None, labels=None):
+# os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4eec6600-f5e3-f385-9b14-850ae9a2b236'
+# os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4b0856cd-c698-63a2-0b6e-9a33d380f9c4'
+
+def argmin_mi(layer_output, labelixs, method_mi, binsize, labelprobs=None, labels=None, labels_unique=None,
+              labels_count=None, labels_inverse=None):
     """
     Get the neuron in layer_output who has the minimal mi with label
     :param layer_output:
@@ -37,15 +44,23 @@ def argmin_mi(layer_output, labelixs, method_mi, binsize, labelprobs=None, label
     """
     mi_min = 0
     min_index_neuron = -1
-    for index_neuron in range(layer_output.shape[1]):
-        # 自己加入的处理
-        layer_output_expand = np.expand_dims(layer_output[:, index_neuron], axis=1)
+    for index_neuron in range(layer_output.shape[-1]):
+        shape_neuron_output = layer_output[..., index_neuron].shape
+        if len(shape_neuron_output) == 1:
+            # [batch_size, ]->[batch_size, 1]
+            layer_output_expand = np.expand_dims(layer_output[..., index_neuron], axis=1)
+        elif len(shape_neuron_output) == 3:
+            # [batch_size, h, w]->[batch_size, h*w]
+            layer_output_expand = np.reshape(layer_output[..., index_neuron], newshape=(shape_neuron_output[0], -1))
+
         if method_mi == 'bin':
             _, mi_neuron = bin_mi(layer_output_expand, labelixs=labelixs, binsize=binsize)
         elif method_mi == 'kde':
             _, mi_neuron = kde_mi(layer_output_expand, labelixs=labelixs, labelprobs=labelprobs)
         elif method_mi == 'kde_in':
             mi_neuron = kde_mi_independent(layer_output_expand, labels)
+        elif method_mi == 'kde_cus':
+            _, mi_neuron = kde_mi_cus(layer_output_expand, labels_unique, labels_count, labels_inverse)
 
         if mi_neuron < mi_min or min_index_neuron == -1:
             mi_min = mi_neuron
@@ -55,7 +70,7 @@ def argmin_mi(layer_output, labelixs, method_mi, binsize, labelprobs=None, label
 
 
 def argmin_marginal_mi(layer_output, F, neuron_list_previous, labelixs, method_mi, binsize, labelprobs=None,
-                       labels=None):
+                       labels=None, labels_unique=None, labels_count=None, labels_inverse=None):
     """
     Get the neuron in F who has the minimal marginal MI w.r.t neuron_list_previous
     :param layer_output:
@@ -72,13 +87,19 @@ def argmin_marginal_mi(layer_output, F, neuron_list_previous, labelixs, method_m
     for index_neuron in F:
         neuron_list = neuron_list_previous + [index_neuron]
 
+        shape_neurons_output = layer_output[..., neuron_list].shape
+        if len(shape_neurons_output) == 4:
+            layer_output_expand = np.reshape(layer_output[..., neuron_list], newshape=(shape_neurons_output[0], -1))
+
         # Sort or not?
         if method_mi == 'bin':
-            _, mi_neuron = bin_mi(layer_output[:, neuron_list], labelixs=labelixs, binsize=binsize)
+            _, mi_neuron = bin_mi(layer_output_expand, labelixs=labelixs, binsize=binsize)
         elif method_mi == 'kde':
-            _, mi_neuron = kde_mi(layer_output[:, neuron_list], labelixs=labelixs, labelprobs=labelprobs)
+            _, mi_neuron = kde_mi(layer_output_expand, labelixs=labelixs, labelprobs=labelprobs)
         elif method_mi == 'kde_in':
-            mi_neuron = kde_mi_independent(layer_output[:, neuron_list], labels)
+            mi_neuron = kde_mi_independent(layer_output_expand, labels)
+        elif method_mi == 'kde_cus':
+            _, mi_neuron = kde_mi_cus(layer_output_expand, labels_unique, labels_count, labels_inverse)
 
         if mi_neuron < mi_min or min_index_neuron == -1:
             mi_min = mi_neuron
@@ -114,7 +135,7 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     regularizer_decay = tf.contrib.layers.l2_regularizer(scale=regu_decay * 1.)
 
     # Rebuild model
-    model = VGG_Combined(config, task_name, weight_a, weight_b, cluster_res_list, signal_list, gamma)
+    model = VGG_Combined(config, task_name, weight_a, weight_b, cluster_res_list, signal_list, musk=False, gamma=gamma)
     model.set_global_tensor(training, regularizer_zero, regularizer_decay, regularizer_zero)
     model.build()
 
@@ -145,31 +166,31 @@ def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_thr
     num_layer = 15
 
     num_label_a = y_a.shape[1]
+    num_label_b = y_b.shape[1]
 
     # 获得Y_A和Y_B统计信息
-    if method_mi == 'kde' or method_mi == 'bin':
+    if method_mi in ['kde', 'bin', 'kde_cus']:
         # For Y_A
-        # 这里是为了找到unique的一行，所以首先把[batch_size, dim]压缩到[batch_size, 1]，然后再找到unique的count
-        uniqueids = np.ascontiguousarray(y_a).view(np.dtype((np.void, y_a.dtype.itemsize * y_a.shape[1])))
-        unique_value, unique_inverse, unique_counts = np.unique(uniqueids, return_index=False, return_inverse=True,
-                                                                return_counts=True)
+        uniqueids_a = np.ascontiguousarray(y_a).view(np.dtype((np.void, y_a.dtype.itemsize * y_a.shape[1])))
+        unique_value_a, unique_inverse_a, unique_counts_a = np.unique(uniqueids_a, return_index=False,
+                                                                      return_inverse=True, return_counts=True)
         # 每一个独特的行（label）在整体中出现的概率，相当于labelprobs
-        labelprobs_a = np.asarray(unique_counts / float(sum(unique_counts)))
+        labelprobs_a = np.asarray(unique_counts_a / float(sum(unique_counts_a)))
         # 每一个独特的行（label）在整体中出现的位置
         labelixs_a = {}
-        for label_index, label_value in enumerate(unique_value):
-            labelixs_a[label_index] = unique_inverse == label_index
+        for label_index, label_value in enumerate(unique_value_a):
+            labelixs_a[label_index] = unique_inverse_a == label_index
 
         # For Y_B
-        uniqueids = np.ascontiguousarray(y_b).view(np.dtype((np.void, y_b.dtype.itemsize * y_b.shape[1])))
-        unique_value, unique_inverse, unique_counts = np.unique(uniqueids, return_index=False, return_inverse=True,
-                                                                return_counts=True)
+        uniqueids_b = np.ascontiguousarray(y_b).view(np.dtype((np.void, y_b.dtype.itemsize * y_b.shape[1])))
+        unique_value_b, unique_inverse_b, unique_counts_b = np.unique(uniqueids_b, return_index=False,
+                                                                      return_inverse=True, return_counts=True)
 
-        labelprobs_b = np.asarray(unique_counts / float(sum(unique_counts)))
+        labelprobs_b = np.asarray(unique_counts_b / float(sum(unique_counts_b)))
 
         labelixs_b = {}
-        for label_index, label_value in enumerate(unique_value):
-            labelixs_b[label_index] = unique_inverse == label_index
+        for label_index, label_value in enumerate(unique_value_b):
+            labelixs_b[label_index] = unique_inverse_b == label_index
 
     # Record list of clusters for all layers
     cluster_res_list = list()
@@ -188,6 +209,13 @@ def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_thr
         cluster_layer_dict['AB'] = np.arange(num_neuron_total).tolist()
         cluster_res_list += [cluster_layer_dict]
 
+    # Output layer
+    cluster_layer_dict = dict()
+    cluster_layer_dict['A'] = [x for x in range(num_label_a)]
+    cluster_layer_dict['B'] = [x + num_label_a for x in range(num_label_b)]
+    cluster_layer_dict['AB'] = list()
+    cluster_res_list += [cluster_layer_dict]
+
     # The main loop
     for layer_index in range(num_layer):
         print('[%s] Cluster layer %d' % (datetime.now(), layer_index))
@@ -198,10 +226,11 @@ def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_thr
         layer_output_1 = layer_output_list_1[layer_index]
         layer_output_2 = layer_output_list_2[layer_index]
 
-        # [batch_size,h,w,channel_size] --> [batch_size,channel_size] for conv
+        # 展开的操作
         if len(layer_output_1.shape) == 4 and len(layer_output_2.shape) == 4:
+            # [batch_size,h,w,channel_size] --> [batch_size,channel_size] for conv
             layer_output_1, layer_output_2 = list(
-                map(lambda x: np.mean(x, axis=(1, 2)), [layer_output_1, layer_output_2]))
+                map(lambda x: np.max(x, axis=(1, 2)), [layer_output_1, layer_output_2]))
 
         # Have the same number of neurons
         assert (layer_output_1.shape[1] == layer_output_2.shape[1])
@@ -214,8 +243,8 @@ def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_thr
         F_B = np.arange(num_neuron_total).tolist()
 
         # Init with the neuron of F_A that has the  minimal MI with Y_B
-        min_index_neuron, mi_min = argmin_mi(layer_output_all[:, F_A], labelixs_b, method_mi, binsize, labelprobs_b,
-                                             y_b)
+        min_index_neuron, mi_min = argmin_mi(layer_output_all[..., F_A], labelixs_b, method_mi, binsize, labelprobs_b,
+                                             y_b, unique_value_b, unique_counts_b, unique_inverse_b)
         print('[%s] MI with Y_B: Min_index_neuron=%d,  mi_min=%f' % (datetime.now(), min_index_neuron, mi_min))
 
         # Lines 3-4
@@ -225,15 +254,15 @@ def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_thr
         while mi_min <= alpha_threshold:
             # Traverse neurons in F_A and find the neuron with the minimal mi with Y_B
             min_index_neuron, mi_min = argmin_marginal_mi(layer_output_all, F_A, cluster_res_list[layer_index]['A'],
-                                                          labelixs_b, method_mi, binsize, labelprobs=labelprobs_b,
-                                                          labels=y_b)
+                                                          labelixs_b, method_mi, binsize, labelprobs_b,
+                                                          y_b, unique_value_b, unique_counts_b, unique_inverse_b)
             print('[%s] MI with Y_B: Min_index_neuron=%d,  mi_min=%f' % (datetime.now(), min_index_neuron, mi_min))
             # Lines 7-8
             F_A.remove(min_index_neuron)
             cluster_res_list[layer_index]['A'].append(min_index_neuron)
 
-        min_index_neuron, mi_min = argmin_mi(layer_output_all[:, F_B], labelixs_a, method_mi, binsize, labelprobs_a,
-                                             y_a)
+        min_index_neuron, mi_min = argmin_mi(layer_output_all[..., F_B], labelixs_a, method_mi, binsize, labelprobs_a,
+                                             y_a, unique_value_a, unique_counts_a, unique_inverse_a)
         print('[%s] MI with Y_A: Min_index_neuron=%d,  mi_min=%f' % (datetime.now(), min_index_neuron, mi_min))
 
         # Line 11
@@ -249,8 +278,8 @@ def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_thr
         while mi_min <= alpha_threshold:
             # Traverse neurons in F_B to find the neuron with the minimal mi with Y_A
             min_index_neuron, mi_min = argmin_marginal_mi(layer_output_all, F_B, cluster_res_list[layer_index]['B'],
-                                                          labelixs_a, method_mi, binsize, labelprobs=labelprobs_a,
-                                                          labels=y_a)
+                                                          labelixs_a, method_mi, binsize, labelprobs_a,
+                                                          y_a, unique_value_a, unique_counts_a, unique_inverse_a)
             print('[%s] MI with Y_A: Min_index_neuron=%d,  mi_min=%f' % (datetime.now(), min_index_neuron, mi_min))
 
             if min_index_neuron in cluster_res_list[layer_index]['A']:
@@ -311,8 +340,16 @@ def get_layers_output(task_name, model_path):
     return model.weight_dict, layers_output, labels
 
 
-def get_connection_signal(cluster_layer_dict, dim_list):
+def get_connection_signal(cluster_res_list, dim_list):
+    """
+    Get the connection signal for all layers (including output layer)
+    :param cluster_res_dict:
+    :param dim_list:
+    :return:
+    """
     signal_list = list()
+
+    # cluster_res_list只有15层，不包括输出层
     for layer_index, layer_clusters in enumerate(cluster_res_list):
 
         signal_layer_dict = dict()
@@ -330,7 +367,7 @@ def get_connection_signal(cluster_layer_dict, dim_list):
         else:
             num_A_last = len(cluster_res_list[layer_index - 1]['A'])
             num_AB_last = len(cluster_res_list[layer_index - 1]['AB'])
-            num_AB_from_a_last = (np.array(cluster_res_list[layer_index - 1]['AB'] < dim_list[layer_index - 1])).sum()
+            num_AB_from_a_last = (np.array(cluster_res_list[layer_index - 1]['AB']) < dim_list[layer_index - 1]).sum()
             num_AB_from_b_last = num_AB_last - num_AB_from_a_last
             num_B_last = len(cluster_res_list[layer_index - 1]['B'])
 
@@ -343,11 +380,33 @@ def get_connection_signal(cluster_layer_dict, dim_list):
 
             # If there is such input neuron
             signal_layer_dict['fromA'] = not num_A_last == 0
+            signal_layer_dict['fromAB'] = not num_AB_last == 0
             signal_layer_dict['fromAB_a'] = not num_AB_from_a_last == 0
             signal_layer_dict['fromAB_b'] = not num_AB_from_b_last == 0
             signal_layer_dict['fromB'] = not num_B_last == 0
 
         signal_list.append(signal_layer_dict)
+
+    # num_A_last = len(cluster_res_list[-1]['A'])
+    # num_AB_last = len(cluster_res_list[-1]['AB'])
+    # num_AB_from_a_last = (np.array(cluster_res_list[-1]['AB']) < 4096).sum()
+    # num_AB_from_b_last = num_AB_last - num_AB_from_a_last
+    # num_B_last = len(cluster_res_list[-1]['B'])
+    #
+    # # The output layer
+    # signal_layer_dict = dict()
+    # signal_layer_dict['A'] = True
+    # signal_layer_dict['B'] = True
+    # signal_layer_dict['AB'] = False
+    #
+    # # If there is such input neuron
+    # signal_layer_dict['fromA'] = not num_A_last == 0
+    # signal_layer_dict['fromAB'] = not num_AB_last == 0
+    # signal_layer_dict['fromAB_a'] = not num_AB_from_a_last == 0
+    # signal_layer_dict['fromAB_b'] = not num_AB_from_b_last == 0
+    # signal_layer_dict['fromB'] = not num_B_last == 0
+    #
+    # signal_list.append(signal_layer_dict)
 
     return signal_list
 
@@ -366,25 +425,32 @@ if __name__ == '__main__':
     weight_dict_b, layers_output_list_b, y_b = get_layers_output('celeba2',
                                                                  model_path='/local/home/david/Remote/models/model_weights/vgg_celeba2_fix_conv_0.873415')
 
-    print('[%s] Divide neurons in each layer into clusters A, B and AB' % (datetime.now()))
-    cluster_res_list = combine_models(y_a, y_b, layers_output_list_a, layers_output_list_b, alpha_threshold=1,
-                                      method_mi='kde', dim_list=dim_list, binsize=5)
+    # print('[%s] Divide neurons in each layer into clusters A, B and AB' % (datetime.now()))
+    # cluster_res_list = combine_models(y_a, y_b, layers_output_list_a, layers_output_list_b, alpha_threshold=1,
+    #                                   method_mi='kde', dim_list=dim_list, binsize=5)
 
     # TODO: 以下为test
-    # cluster_res_list = list()
-    #
-    # for layer_index in range(15):
-    #     # Total number of neurons
-    #     num_neuron_total = dim_list[layer_index] * 2
-    #
-    #     # Store clusters for each layer
-    #     cluster_layer_dict = dict()
-    #
-    #     # Init T^A, T^B and T^AB to store clusters for each layer
-    #     cluster_layer_dict['A'] = list()
-    #     cluster_layer_dict['B'] = list()
-    #     cluster_layer_dict['AB'] = np.arange(num_neuron_total).tolist()
-    #     cluster_res_list += [cluster_layer_dict]
+    cluster_res_list = list()
+
+    for layer_index in range(15):
+        # Total number of neurons
+        num_neuron_total = dim_list[layer_index] * 2
+
+        # Store clusters for each layer
+        cluster_layer_dict = dict()
+
+        # Init T^A, T^B and T^AB to store clusters for each layer
+        cluster_layer_dict['A'] = list()
+        cluster_layer_dict['B'] = list()
+        cluster_layer_dict['AB'] = np.arange(num_neuron_total).tolist()
+        cluster_res_list += [cluster_layer_dict]
+    # Output layer
+    cluster_layer_dict = dict()
+    cluster_layer_dict['A'] = [x for x in range(20)]
+    cluster_layer_dict['B'] = [x + 20 for x in range(20)]
+    cluster_layer_dict['AB'] = list()
+    cluster_res_list += [cluster_layer_dict]
+    # end Test
 
     print('[%s] Model Summary:')
     for layer_index, layer_clusters in enumerate(cluster_res_list):

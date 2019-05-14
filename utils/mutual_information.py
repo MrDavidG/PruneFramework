@@ -15,8 +15,8 @@ import numpy as np
 from scipy.special import logsumexp
 
 
-def kde_input(inputs, hidden, delta=0.1):
-    batch_size = inputs.shape[0]
+def kde_input(hidden, delta=0.1):
+    batch_size = hidden.shape[0]
 
     sum_i = 0
     for hi in hidden:
@@ -27,26 +27,23 @@ def kde_input(inputs, hidden, delta=0.1):
     return -1. / batch_size * sum_i
 
 
-def kde_mi_cus(inputs, labels, hidden, delta=0.1):
-    batch_size = labels.shape[0]
+def kde_mi_cus(hidden, labels_unique, labels_count, labels_inverse, delta=0.1):
+    batch_size = hidden.shape[0]
 
-    H_T = kde_input(inputs, hidden, delta=0.1)
-
-    labels_unique, labels_count = np.unique(labels, return_counts=True)
+    H_T = kde_input(hidden, delta=0.1)
 
     sum_l = 0
     for index, label in enumerate(labels_unique):
         p_l = labels_count[index]
 
         sum_i = 0
-        for index_hi, hi in enumerate(hidden):
-            if labels[index_hi] == label:
-                sum_j = 0
-                for index_hj, hj in enumerate(hidden):
-                    if labels[index_hj] == label:
-                        sum_j += np.exp(-0.5 / delta * np.linalg.norm(hi - hj))
-                sum_i += np.log(1. / p_l * sum_j)
+        for index_hi, hi in enumerate(hidden[labels_inverse == index, ...]):
+            sum_j = 0
+            for index_hj, hj in enumerate(hidden[labels_inverse == index, ...]):
+                sum_j += np.exp(-0.5 / delta * np.linalg.norm(hi - hj))
+            sum_i += np.log(1. / p_l * sum_j)
         sum_l += sum_i
+
     H_T_Y = -1. / batch_size * sum_l
 
     return H_T, H_T - H_T_Y
@@ -110,7 +107,7 @@ def kde_mi(hidden, labelixs, labelprobs):
 
     # Compute conditional entropies of layer activity given output
     hM_given_Y_upper = 0.
-    for j in range(10):
+    for j in range(len(labelixs)):
         if sum(labelixs[j]) != 0:
             hcond_upper = entropy_estimator_kl(hidden[labelixs[j], :], noise_variance)
             hM_given_Y_upper += labelprobs[j] * hcond_upper
@@ -148,7 +145,7 @@ def kde_mi_independent(hidden, labels):
 
         # Compute conditional entropies of layer activity given output
         hM_given_Y_upper = 0.
-        for j in range(2):
+        for j in range(len(labelixs)):
             if sum(labelixs[j]) != 0:
                 hcond_upper = entropy_estimator_kl(hidden[labelixs[j], :], noise_variance)
                 hM_given_Y_upper += labelprobs[j] * hcond_upper
@@ -184,7 +181,7 @@ def kde_mi_unique(hidden, labels):
 
     # Compute conditional entropies of layer activity given output
     hM_given_Y_upper = 0.
-    for j in range(10):
+    for j in range(len(labelixs)):
         if sum(labelixs[j]) != 0:
             hcond_upper = entropy_estimator_kl(hidden[labelixs[j], :], noise_variance)
             hM_given_Y_upper += labelprobs[j] * hcond_upper
