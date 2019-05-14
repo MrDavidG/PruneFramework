@@ -27,12 +27,11 @@ import time
 import os
 import tensorflow as tf
 
-
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
 class VGG_Combined(BaseModel):
-    def __init__(self, config, task_name, weight_a, weight_b, cluster_res_list, musk=False, gamma=1.):
+    def __init__(self, config, task_name, weight_a, weight_b, cluster_res_list, signal_list, musk=False, gamma=1.):
         super(VGG_Combined, self).__init__(config)
 
         self.imgs_path = self.config.dataset_path + 'celeba/'
@@ -51,6 +50,8 @@ class VGG_Combined(BaseModel):
 
         self.regularizer_decay = None
 
+        self.signal_list = signal_list
+
         self.weight_dict = self.construct_initial_weights(weight_a, weight_b, cluster_res_list)
 
         if self.prune_method == 'info_bottle' and 'conv1_1/info_bottle/mu' not in self.weight_dict.keys():
@@ -61,15 +62,15 @@ class VGG_Combined(BaseModel):
             return (np.zeros(shape=shape, dtype=np.float32)).astype(dtype=np.float32)
 
         def weight_variable(shape, local=0, scale=1e-2):
-            return np.random.normal(local=local, scale=scale, size=shape).astype(dtype=np.float32)
+            return np.random.normal(loc=local, scale=scale, size=shape).astype(dtype=np.float32)
 
-        weight_dict = list()
+        weight_dict = dict()
 
         dim_list = [64, 64,
                     128, 128,
                     256, 256, 256,
                     512, 512, 512,
-                    512, 512, 521,
+                    512, 512, 512,
                     4096, 4096, self.n_classes]
 
         for layer_index, layer_name in enumerate(['conv1_1', 'conv1_2',
@@ -98,11 +99,18 @@ class VGG_Combined(BaseModel):
                         np.array(cluster_res_list[layer_index - 1]['AB']) < dim_list[layer_index - 1]).sum()
                 num_AB_from_b_last_layer = len(cluster_res_list[layer_index - 1]['AB']) - num_AB_from_a_last_layer
 
+                # 全连接层需要展开
+                if layer_name == 'fc6':
+                    num_A_last_layer *= 4
+                    num_B_last_layer *= 4
+                    num_AB_from_a_last_layer *= 4
+                    num_AB_from_b_last_layer *= 4
+
                 # Number of neurons in this layer
                 num_A = len(cluster_res_list[layer_index]['A'])
                 num_B = len(cluster_res_list[layer_index]['B'])
                 num_AB_from_a = (np.array(cluster_res_list[layer_index]['AB']) < dim_list[layer_index]).sum()
-                num_AB_from_b = len(cluster_res_list[layer_index]['AB']) - num_AB_from_a_last_layer
+                num_AB_from_b = len(cluster_res_list[layer_index]['AB']) - num_AB_from_a
 
                 if layer_name.startswith('conv'):
                     # New weights for neurons from A and AB to A
@@ -116,27 +124,33 @@ class VGG_Combined(BaseModel):
                     # From A to AB
                     weight_dict[layer_name + '/AB/A/weights'] = np.concatenate((weight[:, :,
                                                                                 cluster_res_list[layer_index - 1]['A'],
+                                                                                :][:, :, :,
                                                                                 cluster_res_list[layer_index]['AB'][
-                                                                                :num_AB_from_a]], weight_variable(
-                        (3, 3, num_A_last_layer, num_AB_from_b))), axis=-1)
+                                                                                :num_AB_from_a]],
+                                                                                weight_variable((3, 3, num_A_last_layer,
+                                                                                                 num_AB_from_b))),
+                                                                               axis=-1)
 
                     # From AB to AB
                     weight_AB_part_a = np.concatenate((weight[:, :, cluster_res_list[layer_index - 1]['AB'][
-                                                                    :num_AB_from_a_last_layer],
+                                                                    :num_AB_from_a_last_layer], :][:, :, :,
                                                        cluster_res_list[layer_index]['AB'][:num_AB_from_a]],
                                                        weight_variable(
-                                                           (3, 3, num_AB_from_b_last_layer, num_AB_from_a))), axis=2)
+                                                           (3, 3, num_AB_from_b_last_layer, num_AB_from_a))),
+                                                      axis=2)
                     weight_AB_part_b = np.concatenate((weight_variable((3, 3, num_AB_from_a_last_layer, num_AB_from_b)),
-                                                       weight[:, :, cluster_res_list[layer_index - 1]['AB'][
-                                                                    num_AB_from_a_last_layer:],
-                                                       cluster_res_list[layer_index]['AB'][num_AB_from_a:]]), axis=2)
-
+                                                       weight[:, :, np.array(cluster_res_list[layer_index - 1]['AB'][
+                                                                             num_AB_from_a_last_layer:]) - dim_list[
+                                                                        layer_index - 1], :][:, :, :,
+                                                       cluster_res_list[layer_index]['AB'][num_AB_from_a:]]),
+                                                      axis=2)
                     weight_dict[layer_name + '/AB/AB/weights'] = np.concatenate((weight_AB_part_a, weight_AB_part_b),
                                                                                 axis=-1)
 
                     # From B to AB
                     weight_dict[layer_name + '/AB/B/weights'] = np.concatenate((weight_variable(
                         (3, 3, num_B_last_layer, num_AB_from_a)), weight[:, :, cluster_res_list[layer_index - 1]['B'],
+                                                                  :][:, :, :,
                                                                   cluster_res_list[layer_index]['AB'][num_AB_from_a:]]),
                         axis=-1)
 
@@ -156,22 +170,27 @@ class VGG_Combined(BaseModel):
                     if layer_name != 'fc8':
                         # New weights for neurons from last layer to AB
                         # From A to AB
-                        weight_dict[layer_name + '/AB/A/weights'] = np.concatenate((weight[cluster_res_list[
-                            layer_index - 1]['A']], cluster_res_list[layer_index]['AB'][:num_AB_from_a],
+                        weight_dict[layer_name + '/AB/A/weights'] = np.concatenate((weight[
+                                                                                    cluster_res_list[layer_index - 1][
+                                                                                        'A'], :][:,
+                                                                                    cluster_res_list[layer_index]['AB'][
+                                                                                    :num_AB_from_a]],
                                                                                     weight_variable((num_A_last_layer,
                                                                                                      num_AB_from_b))),
                                                                                    axis=-1)
 
                         # From AB to AB
+                        # !!!!!从conv层到全连接层的时候，原来的512->2048,而且其中的index=i, 投影变成了[4*i, 4i+4]...整体是变成了4倍
+                        # ！！！！
                         weight_AB_part_a = np.concatenate((weight[cluster_res_list[layer_index - 1]['AB'][
-                                                                  :num_AB_from_a_last_layer],
-                                                                  cluster_res_list[layer_index]['AB'][:num_AB_from_a]],
+                                                                  :num_AB_from_a_last_layer], :][:,
+                                                           cluster_res_list[layer_index]['AB'][:num_AB_from_a]],
                                                            weight_variable((num_AB_from_b_last_layer, num_AB_from_a))),
                                                           axis=0)
                         weight_AB_part_b = np.concatenate((weight_variable((num_AB_from_a_last_layer, num_AB_from_b)),
                                                            weight[cluster_res_list[layer_index - 1]['AB'][
-                                                                  num_AB_from_a_last_layer:],
-                                                                  cluster_res_list[layer_index]['AB'][num_AB_from_a:]]),
+                                                                  num_AB_from_a_last_layer:], :][:,
+                                                           cluster_res_list[layer_index]['AB'][num_AB_from_a:]]),
                                                           axis=0)
 
                         weight_dict[layer_name + '/AB/AB/weights'] = np.concatenate(
@@ -179,9 +198,9 @@ class VGG_Combined(BaseModel):
 
                         # From B to AB
                         weight_dict[layer_name + '/AB/B/weights'] = np.concatenate((weight_variable(
-                            (num_B_last_layer, num_AB_from_a)), weight[cluster_res_list[layer_index - 1]['B'],
-                                                                       cluster_res_list[layer_index]['AB'][
-                                                                       num_AB_from_a:]]), axis=-1)
+                            (num_B_last_layer, num_AB_from_a)), weight[cluster_res_list[layer_index - 1]['B'], :][:,
+                                                                cluster_res_list[layer_index]['AB'][num_AB_from_a:]]),
+                            axis=-1)
 
                     # New weights for neurons from AB and B to B
                     weight_dict[layer_name + '/B/weights'] = np.concatenate((weight_variable(
@@ -190,7 +209,8 @@ class VGG_Combined(BaseModel):
                 # Biases
                 weight_dict[layer_name + '/A/biases'] = bias[cluster_res_list[layer_index]['A']]
                 if layer_name != 'fc8':
-                    weight_dict[layer_name + '/AB/biases'] = bias[cluster_res_list[layer_index]['AB']]
+                    # 只有/AB/A有bias，/AB/AB和/AB/B都没有bias(效果不影响)
+                    weight_dict[layer_name + '/AB/A/biases'] = bias[cluster_res_list[layer_index]['AB']]
                 weight_dict[layer_name + '/B/biases'] = bias[cluster_res_list[layer_index]['B']]
 
         return weight_dict
@@ -237,9 +257,13 @@ class VGG_Combined(BaseModel):
         :return:
         """
 
-        def get_conv(x, regu_conv):
-            return ConvLayer(x, self.weight_dict, self.config.dropout, self.is_training, self.is_musked,
-                             regularizer_conv=regu_conv, is_merge_bn=self.meta_val('is_mrege_bn'))
+        def get_conv(x, regu_conv, has_bias=True):
+            if has_bias:
+                return ConvLayer(x, self.weight_dict, self.config.dropout, self.is_training, self.is_musked,
+                                 regularizer_conv=regu_conv, is_merge_bn=self.meta_val('is_mrege_bn'))
+            else:
+                return ConvLayer(x, self.weight_dict, self.config.dropout, self.is_training, self.is_musked,
+                                 regularizer_conv=regu_conv, is_merge_bn=self.meta_val('is_mrege_bn'), has_bias=False)
 
         self.layers.clear()
         with tf.variable_scope(self.task_name, reuse=tf.AUTO_REUSE):

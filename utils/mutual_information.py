@@ -114,15 +114,84 @@ def kde_mi(hidden, labelixs, labelprobs):
         if sum(labelixs[j]) != 0:
             hcond_upper = entropy_estimator_kl(hidden[labelixs[j], :], noise_variance)
             hM_given_Y_upper += labelprobs[j] * hcond_upper
-        # hcond_upper = entropy_estimator_kl(hidden[labelixs[j], :], noise_variance)
-        # hM_given_Y_upper += labelprobs[j] * hcond_upper
 
-    hM_given_X = kde_condentropy(hidden, noise_variance)
+    # hM_given_X = kde_condentropy(hidden, noise_variance)
 
-    MI_XM_upper = h_upper - hM_given_X
+    # MI_XM_upper = h_upper - hM_given_X
     MI_YM_upper = h_upper - hM_given_Y_upper
 
-    return MI_XM_upper, MI_YM_upper
+    # return MI_XM_upper, MI_YM_upper
+    return 0, MI_YM_upper
+
+
+def kde_mi_independent(hidden, labels):
+    """
+
+    :param hidden: 隐藏层的输出[batch_size, dim/channel_size]
+    :param labelixs: 每一个label在哪些instance中出现过，即[batch_size, 1]
+    :param labelprobs: 每一个label出现的概率，[dim_label]
+    :return:
+    """
+    # Added Gaussian noise variance
+    noise_variance = 1e-1
+    h_upper = entropy_estimator_kl(hidden, noise_variance)
+
+    # 对第label_index个独立的label，看做二分类问题
+    hM_given_Y_upper_sum = 0
+    for label_index in range(labels.shape[1]):
+        labelixs = {}
+        labelixs[0] = labels[:, label_index] == -1
+        labelixs[1] = labels[:, label_index] == 1
+
+        prob_label = np.mean((labels[:, label_index] == 1).astype(np.float32), axis=0)
+        labelprobs = np.array([1 - prob_label, prob_label])
+
+        # Compute conditional entropies of layer activity given output
+        hM_given_Y_upper = 0.
+        for j in range(2):
+            if sum(labelixs[j]) != 0:
+                hcond_upper = entropy_estimator_kl(hidden[labelixs[j], :], noise_variance)
+                hM_given_Y_upper += labelprobs[j] * hcond_upper
+        hM_given_Y_upper_sum += hM_given_Y_upper
+
+    MI_YM_upper = h_upper * labels.shape[1] - hM_given_Y_upper_sum
+
+    return MI_YM_upper
+
+
+def kde_mi_unique(hidden, labels):
+    """
+
+    :param hidden: 隐藏层的输出[batch_size, dim/channel_size]
+    :param labelixs: 每一个label在哪些instance中出现过，即[batch_size, 1]
+    :param labelprobs: 每一个label出现的概率，[dim_label]
+    :return:
+    """
+    # Added Gaussian noise variance
+    noise_variance = 1e-1
+    h_upper = entropy_estimator_kl(hidden, noise_variance)
+
+    # 这里是为了找到unique的一行，所以首先把[batch_size, dim]压缩到[batch_size, 1]，然后再找到unique的count
+    uniqueids = np.ascontiguousarray(labels).view(np.dtype((np.void, labels.dtype.itemsize * labels.shape[1])))
+    unique_value, unique_inverse, unique_counts = np.unique(uniqueids, return_index=False, return_inverse=True,
+                                                            return_counts=True)
+    # 每一个独特的行（label）在整体中出现的概率，相当于labelprobs
+    labelprobs = np.asarray(unique_counts / float(sum(unique_counts)))
+    # 每一个独特的行（label）在整体中出现的位置
+    labelixs = {}
+    for label_index, label_value in enumerate(unique_value):
+        labelixs[label_index] = unique_inverse == label_index
+
+    # Compute conditional entropies of layer activity given output
+    hM_given_Y_upper = 0.
+    for j in range(10):
+        if sum(labelixs[j]) != 0:
+            hcond_upper = entropy_estimator_kl(hidden[labelixs[j], :], noise_variance)
+            hM_given_Y_upper += labelprobs[j] * hcond_upper
+
+    MI_YM_upper = h_upper - hM_given_Y_upper
+
+    return MI_YM_upper
 
 
 def bin_mi(hidden, labelixs, binsize=0.5):
