@@ -220,44 +220,63 @@ class VGG_Combined():
         :return:
         """
 
-        def get_signal(layer_index, key):
-            return self.signal_list[layer_index][key]
-
         self.layers.clear()
         with tf.variable_scope(self.task_name, reuse=tf.AUTO_REUSE):
             x = self.X
 
-            self.kl_total = 0.
+            conv = tf.nn.conv2d(x, self.weight_dict['conv1_1/AB/weights'], [1, 1, 1, 1], padding='SAME') + self.weight_dict['conv1_1/AB/biases']
 
-            layer_index = 0
+            self.layers.append(conv)
+
+            y_AB = tf.nn.relu(conv)
+
+            conv_AB = tf.nn.conv2d(y_AB, self.weight_dict['conv1_2/AB/AB/weights'], [1, 1, 1, 1], padding='SAME') + self.weight_dict['conv1_2/AB/AB/biases']
+
+            self.layers.append(conv_AB)
+            y_AB_1 = tf.nn.relu(conv_AB)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            # layer_index = 0
             # the name of the layer and the coefficient of the kl divergence
-            for layer_set in [('conv1_1', 1.0 / 32), ('conv1_2', 1.0 / 32), 'pooling',
-                              ('conv2_1', 1.0 / 16), ('conv2_2', 1.0 / 16), 'pooling',
-                              ('conv3_1', 1.0 / 8), ('conv3_2', 1.0 / 8), ('conv3_3', 1.0 / 8), 'pooling',
-                              ('conv4_1', 1.0 / 4), ('conv4_2', 1.0 / 4), ('conv4_3', 1.0 / 4), 'pooling',
-                              ('conv5_1', 1.0 / 2), ('conv5_2', 1.0 / 2), ('conv5_3', 1.0 / 2), 'pooling']:
-                if layer_index == 0:
-
-                    conv = tf.nn.conv2d(x, self.weight_dict['conv1_1/AB/weights'], [1, 1, 1, 1], padding='SAME') + self.weight_dict['conv1_1/AB/biases']
-
-                    self.layers.append(conv)
-
-                    y_AB = tf.nn.relu(conv)
-
-                    layer_index+=1
-                elif layer_set != 'pooling':
-                    conv_name, kl_mult = layer_set
-
-                    conv_AB = tf.nn.conv2d(y_AB_last, self.weight_dict[conv_name + '/AB/AB/weights'], [1, 1, 1, 1], padding='SAME') + self.weight_dict[conv_name + '/AB/AB/biases']
-
-                    self.layers.append(conv_AB)
-                    y_AB = tf.nn.relu(conv_AB)
-
-                    layer_index+=1
-                elif layer_set == 'pooling':
-
-                    y_AB = tf.nn.max_pool(y_AB_last, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
-
-
-                y_AB_last = y_AB
+            # for layer_set in [('conv1_1', 1.0 / 32), ('conv1_2', 1.0 / 32), 'pooling',
+            #                   ('conv2_1', 1.0 / 16), ('conv2_2', 1.0 / 16), 'pooling',
+            #                   ('conv3_1', 1.0 / 8), ('conv3_2', 1.0 / 8), ('conv3_3', 1.0 / 8), 'pooling',
+            #                   ('conv4_1', 1.0 / 4), ('conv4_2', 1.0 / 4), ('conv4_3', 1.0 / 4), 'pooling',
+            #                   ('conv5_1', 1.0 / 2), ('conv5_2', 1.0 / 2), ('conv5_3', 1.0 / 2), 'pooling']:
+            #     if layer_index == 0:
+            #
+            #         conv = tf.nn.conv2d(x, self.weight_dict['conv1_1/AB/weights'], [1, 1, 1, 1], padding='SAME') + self.weight_dict['conv1_1/AB/biases']
+            #
+            #         self.layers.append(conv)
+            #
+            #         y_AB = tf.nn.relu(conv)
+            #
+            #         layer_index+=1
+            #     elif layer_set != 'pooling':
+            #         conv_name, kl_mult = layer_set
+            #
+            #         conv_AB = tf.nn.conv2d(y_AB_last, self.weight_dict[conv_name + '/AB/AB/weights'], [1, 1, 1, 1], padding='SAME') + self.weight_dict[conv_name + '/AB/AB/biases']
+            #
+            #         self.layers.append(conv_AB)
+            #         y_AB = tf.nn.relu(conv_AB)
+            #
+            #         layer_index+=1
+            #     elif layer_set == 'pooling':
+            #
+            #         y_AB = tf.nn.max_pool(y_AB_last, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
+            #
+            #
+            #     y_AB_last = y_AB
 
