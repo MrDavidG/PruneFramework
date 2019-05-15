@@ -143,10 +143,11 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     session.run(tf.global_variables_initializer())
     model.eval_once(session, model.test_init, -1)
 
-    model.train(sess=session, n_epochs=10, lr=0.1)
-    model.train(sess=session, n_epochs=100, lr=0.01)
-    model.train(sess=session, n_epochs=80, lr=0.001)
-    model.train(sess=session, n_epochs=80, lr=0.0001)
+    model.train(sess=session, n_epochs=10, task_name='AB', lr=0.1)
+    model.train(sess=session, n_epochs=10, task_name='B', lr=0.1)
+    model.train(sess=session, n_epochs=100, task_name='A', lr=0.01)
+    model.train(sess=session, n_epochs=80, task_name='A', lr=0.001)
+    model.train(sess=session, n_epochs=80, task_name='A', lr=0.0001)
 
 
 def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_threshold, method_mi, dim_list, N_total=1,
@@ -468,4 +469,4 @@ if __name__ == '__main__':
     signal_list = get_connection_signal(cluster_res_list, dim_list)
 
     print('[%s] Rebuild and train the combined model' % (datetime.now()))
-    rebuild_model(weight_dict_a, weight_dict_b, cluster_res_list, signal_list, gamma=10, regu_decay=1)
+    rebuild_model(weight_dict_a, weight_dict_b, cluster_res_list, signal_list, gamma=20, regu_decay=0)
