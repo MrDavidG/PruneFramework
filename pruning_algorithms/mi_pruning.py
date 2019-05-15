@@ -15,7 +15,7 @@ import sys
 sys.path.append(r"/local/home/david/Remote/")
 
 from utils.mutual_information import kde_mi, bin_mi, kde_mi_independent, kde_mi_cus
-from models.vgg_mi import VGG_Combined
+from models.vgg_mi_new import VGG_Combined
 from models.vgg_celeba import VGGNet
 from utils.config import process_config
 from datetime import datetime
@@ -144,21 +144,34 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     model.set_global_tensor(training, regularizer_zero, regularizer_decay, regularizer_zero)
     model.build()
 
-
+    # 以下为Test
     # Train
+    # session.run(tf.global_variables_initializer())
+    # # TODO: test
+
+    # # TODO: test
+    with tf.variable_scope('task/conv1_2/AB/AB'):
+        out = model.get_conv(tf.nn.relu(model.layers[0].layer_output), model.regularizer_conv).layer_output
+
     session.run(tf.global_variables_initializer())
-    # TODO: test
     session.run(model.test_init)
 
+    # res_1, res_2, res_4= session.run([out, model.layers[1].layer_output, tf.nn.conv2d(o_a[0], weight_a['conv1_2/weights'], strides=[1, 1, 1, 1], padding='SAME')+weight_dict_a['conv1_2/biases']])
+    res_1, res_2, res_4= session.run([out, model.layers[1].layer_output, tf.nn.conv2d(model.layers[0].layer_output[:,:,:,:64], weight_a['conv1_2/weights'], strides=[1, 1, 1, 1], padding='SAME')+weight_dict_a['conv1_2/biases']])
+    res_3 = o_a[1]
+
     # Graph
-    summary_writer = tf.summary.FileWriter('/local/home/david/log/', session.graph)
+    # summary_writer = tf.summary.FileWriter('/local/home/david/log/', session.graph)
 
     # model.eval_once(session, model.test_init, -1)
 
-    layers_name = [layer.layer_name for layer in model.layers]
-    layers_output, x = session.run([[layer.layer_output for layer in model.layers]] + [model.X],
-                                   feed_dict={model.is_training: False})
-    #
+
+
+    # layers_name = [layer.layer_name for layer in model.layers]
+    # layers_output, x, inputs = session.run([[layer.layer_output for layer in model.layers]] + [model.X]+ [[model.layers[0].layer_input, model.layers[1].layer_input, model.layers[1].layer_output
+    #                                                                                                        ]],
+    #                                feed_dict={model.is_training: False})
+    # #
     print('Stop here')
 
     # model.train(sess=session, n_epochs=10, task_name='AB', lr=0.1)
@@ -352,13 +365,13 @@ def get_layers_output(task_name, model_path, with_relu=True):
 
     # layers_output_tf = [layer.layer_output for layer in model.layers[:-1]]
     layers_output_tf = [layer.layer_output for layer in model.layers]
-    layers_output, labels, input = sess.run([layers_output_tf] + [model.Y] + [model.X],
+    layers_output, labels, inputs = sess.run([layers_output_tf] + [model.Y] + [[layer.layer_input for layer in model.layers]],
                                             feed_dict={model.is_training: False})
 
     if with_relu:
         layers_output = [x * (x > 0) for x in layers_output]
 
-    return model.weight_dict, layers_output, labels, input
+    return model.weight_dict, layers_output, labels, inputs
 
 
 def get_connection_signal(cluster_res_list, dim_list):

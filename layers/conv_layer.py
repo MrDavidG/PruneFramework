@@ -16,40 +16,18 @@ import tensorflow as tf
 
 class ConvLayer(BaseLayer):
     def __init__(self, x, weight_dict=None, is_dropout=False, is_training=False, is_musked=False, regularizer_conv=None,
-                 stride=1, is_shared=False, share_scope=None, is_merge_bn=False, has_bias=True):
+                 stride=1, is_shared=False, share_scope=None, is_merge_bn=False):
         super(ConvLayer, self).__init__()
 
         # With biases
         if is_merge_bn:
             self.layer_type = 'C'
-            if has_bias:
-                # with biases
-                self.create_merge(x, weight_dict, is_dropout, is_training, is_musked, regularizer_conv, stride)
-            else:
-                # Without biases and bn
-                self.create_without_bias(x, weight_dict, is_dropout, is_training, is_musked, regularizer_conv, stride)
+            # with biases
+            self.create_merge(x, weight_dict, is_dropout, is_training, is_musked, regularizer_conv, stride)
         else:
             # Without biases, but with params of batch normalization
             self.layer_type = 'R'
             self.create(x, weight_dict, is_dropout, is_training, is_musked, regularizer_conv, stride)
-
-    def create_without_bias(self, x, weight_dict=None, is_dropout=False, is_training=False, is_musked=False,
-                            regularizer_conv=None, trainable=True, stride=1):
-        self.layer_input = x
-        filt = self.get_conv_filter_without_bias(weight_dict, regularizer_conv, trainable=trainable)
-
-        if is_musked:
-            musk = tf.get_variable(name="musk", initializer=weight_dict[self.layer_name + '/musk'], trainable=False)
-            conv = tf.nn.conv2d(x, filt * musk, [1, stride, stride, 1],
-                                padding='SAME')
-        else:
-            conv = tf.nn.conv2d(x, filt, [1, stride, stride, 1], padding='SAME')
-
-        if is_dropout:
-            conv = tf.layers.dropout(conv, noise_shape=[tf.shape(conv)[0], 1, 1, tf.shape(conv)[3]],
-                                     training=is_training)
-        self.weight_tensors = [filt]
-        self.layer_output = conv
     
     def create(self, x, weight_dict=None, is_dropout=False, is_training=False, is_musked=False, regularizer_conv=None,
                stride=1):
@@ -121,9 +99,3 @@ class ConvLayer(BaseLayer):
                                  regularizer=regularizer_conv, trainable=trainable)
 
         return filt, biases
-
-    def get_conv_filter_without_bias(self, weight_dict, regularizer_conv, trainable):
-        filt = tf.get_variable(name="weights", initializer=weight_dict[self.layer_name + '/weights'],
-                               regularizer=regularizer_conv, trainable=trainable)
-
-        return filt

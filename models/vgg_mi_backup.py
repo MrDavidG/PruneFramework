@@ -311,6 +311,11 @@ class VGG_Combined(BaseModel):
                                                                                size=[num_B]).astype(np.float32)
         return weight_dict
 
+    def get_conv(self, x, regu_conv, has_bias=True):
+        return ConvLayer(x, self.weight_dict, is_dropout=False, is_training=self.is_training,
+                         is_musked=self.is_musked, regularizer_conv=regu_conv,
+                         is_merge_bn=self.meta_val('is_merge_bn'), has_bias=has_bias)
+
     def inference(self):
         """
         build the model of VGG_Combine
