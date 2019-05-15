@@ -55,9 +55,7 @@ class VGG_Combined():
 
 
     def set_global_tensor(self, training_tensor, regu_conv, regu_fc,regularizer_decay):
-        self.is_training = training_tensor
-        self.regularizer_conv = regu_conv
-        self.regularizer_fc = regu_fc
+        pass
 
     def load_dataset(self):
         dataset_train, dataset_val, self.total_batches_train, self.n_samples_train, self.n_samples_val = ImageDataGenerator.load_dataset(
@@ -67,20 +65,6 @@ class VGG_Combined():
             dataset_val)
 
     def construct_initial_weights(self, weight_dict_a, weight_dict_b, cluster_res_list):
-        dim_list = [64, 64,
-                    128, 128,
-                    256, 256, 256,
-                    512, 512, 512,
-                    512, 512, 512,
-                    4096, 4096, self.n_classes]
-
-        def bias_variable(shape):
-            return (np.zeros(shape=shape, dtype=np.float32)).astype(dtype=np.float32)
-
-        def weight_variable(shape, local=0, scale=1e-2):
-            # return np.random.normal(loc=local, scale=scale, size=shape).astype(dtype=np.float32)
-            return np.zeros(shape=shape).astype(dtype=np.float32)
-
         def get_signal(layer_index, key):
             return self.signal_list[layer_index][key]
 
@@ -92,12 +76,7 @@ class VGG_Combined():
 
         weight_dict = dict()
 
-        for layer_index, layer_name in enumerate(['conv1_1', 'conv1_2',
-                                                  'conv2_1', 'conv2_2',
-                                                  'conv3_1', 'conv3_2', 'conv3_3',
-                                                  'conv4_1', 'conv4_2', 'conv4_3',
-                                                  'conv5_1', 'conv5_2', 'conv5_3',
-                                                  'fc6', 'fc7', 'fc8']):
+        for layer_index, layer_name in enumerate(['conv1_1', 'conv1_2']):
             # All bias
             bias = np.concatenate(
                 (weight_dict_a[layer_name + '/biases'], weight_dict_b[layer_name + '/biases'])).astype(np.float32)
@@ -145,63 +124,11 @@ class VGG_Combined():
                 AB_last = cluster_res_list[layer_index - 1]['AB']
                 B_last = cluster_res_list[layer_index - 1]['B']
 
-                # Init weights
-                if layer_name.startswith('conv'):
-                    # A
-                    if get_signal(layer_index, 'A'):
-                        weight_dict[layer_name + '/A/weights'] = weight[:, :, A_last + AB_last, :][:, :, :, A]
 
-                    # AB
-                    if get_signal(layer_index, 'AB'):
-                        # From A to AB
-                        if get_signal(layer_index, 'fromA'):
-                            weight_dict[layer_name + '/AB/A/weights'] = weight[:, :, A_last, :][:, :, :, AB]
+                # From AB to AB
+                if get_signal(layer_index, 'fromAB'):
+                    weight_dict[layer_name + '/AB/AB/weights'] = weight[:, :, AB_last, :][:, :, :, AB]
 
-                        # From AB to AB
-                        if get_signal(layer_index, 'fromAB'):
-                            weight_dict[layer_name + '/AB/AB/weights'] = weight[:, :, AB_last, :][:, :, :, AB]
-
-                        # From B to AB
-                        if get_signal(layer_index, 'fromB'):
-                            weight_dict[layer_name + '/AB/B/weights'] = weight[:, :, B_last, :][:, :, :AB]
-
-                    # B
-                    if get_signal(layer_index, 'B'):
-                        weight_dict[layer_name + '/B/weights'] = weight[:, :, AB_last + B_last, :][:, :, :, B]
-
-                elif layer_name.startswith('fc'):
-                    # Fc layer
-
-                    if layer_name == 'fc6':
-                        # From conv to fc, times h*w
-                        # !!!!!从conv层到全连接层的时候，原来的512->2048,而且其中的index=i, 投影变成了[4*i, 4i+4]...整体是变成了4倍
-                        # 最后一层产生的feature map边长的平方
-                        A_last = get_expand(A_last)
-                        AB_last = get_expand(AB_last)
-                        B_last = get_expand(B_last)
-
-                    # New weights for neurons from A and AB to A
-                    if get_signal(layer_index, 'A'):
-                        weight_dict[layer_name + '/A/weights'] = weight[A_last + AB_last, :][:, A]
-
-                    # The output layer does not have AB
-                    if get_signal(layer_index, 'AB'):
-                        # New weights for neurons from last layer to AB
-                        # From A to AB
-                        if get_signal(layer_index, 'fromA'):
-                            weight_dict[layer_name + '/AB/A/weights'] = weight[A_last, :][:, AB]
-
-                        # From AB to AB
-                        if get_signal(layer_index, 'fromAB'):
-                            weight_dict[layer_name + '/AB/AB/weights'] = weight[AB_last, :][:, AB]
-
-                        # From B to AB
-                        if get_signal(layer_index, 'fromB'):
-                            weight_dict[layer_name + '/AB/B/weights'] = weight[B_last, :][:, AB]
-
-                    # New weights for neurons from AB and B to B
-                    if get_signal(layer_index, 'B'):
-                        weight_dict[layer_name + '/B/weights'] = weight[AB_last + B_last, :][:, B]
 
                 # Biases
                 if get_signal(layer_index, 'A'):
