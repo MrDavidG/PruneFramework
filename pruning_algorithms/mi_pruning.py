@@ -15,7 +15,7 @@ import sys
 sys.path.append(r"/local/home/david/Remote/")
 
 from utils.mutual_information import kde_mi, bin_mi, kde_mi_independent, kde_mi_cus
-from models.vgg_mi_new import VGG_Combined
+from models.vgg_mi_new_new import VGG_Combined
 from models.vgg_celeba import VGGNet
 from utils.config import process_config
 from datetime import datetime
@@ -142,23 +142,27 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     model = VGG_Combined(config, task_name, weight_a, weight_b, cluster_res_list, signal_list, musk=False, gamma=gamma,
                          ib_threshold=ib_threshold)
     model.set_global_tensor(training, regularizer_zero, regularizer_decay, regularizer_zero)
-    model.build()
-
+    # model.build()
+    model.inference()
     # 以下为Test
     # Train
     # session.run(tf.global_variables_initializer())
     # # TODO: test
 
     # # TODO: test
-    with tf.variable_scope('task/conv1_2/AB/AB'):
-        out = model.get_conv(tf.nn.relu(model.layers[0].layer_output), model.regularizer_conv).layer_output
+    # with tf.variable_scope('task/conv1_2/AB/AB'):
+    #     out = model.get_conv(tf.nn.relu(model.layers[0].layer_output), model.regularizer_conv).layer_output
 
     session.run(tf.global_variables_initializer())
     session.run(model.test_init)
 
     # res_1, res_2, res_4= session.run([out, model.layers[1].layer_output, tf.nn.conv2d(o_a[0], weight_a['conv1_2/weights'], strides=[1, 1, 1, 1], padding='SAME')+weight_dict_a['conv1_2/biases']])
-    res_1, res_2, res_4= session.run([out, model.layers[1].layer_output, tf.nn.conv2d(model.layers[0].layer_output[:,:,:,:64], weight_a['conv1_2/weights'], strides=[1, 1, 1, 1], padding='SAME')+weight_dict_a['conv1_2/biases']])
-    res_3 = o_a[1]
+    # res_1, res_2, res_4= session.run([out, model.layers[1].layer_output, tf.nn.conv2d(model.layers[1].layer_input[:,:,:,:64], weight_a['conv1_2/weights'], strides=[1, 1, 1, 1], padding='SAME')+weight_dict_a['conv1_2/biases']])
+    # res_3 = o_a[1]
+
+    # session.run(model.test_init)
+
+    # session.run(tf.nn.conv2d(model.layers[0].layer_output, model.weight_dict['conv1_2/AB/AB/weights'], [1,1,1,1], padding='SAME')+model.weight_dict['conv1_2/AB/biases'])
 
     # Graph
     # summary_writer = tf.summary.FileWriter('/local/home/david/log/', session.graph)
