@@ -314,6 +314,16 @@ class VGG_Combined(BaseModel):
                 return ConvLayer(x, self.weight_dict, self.config.dropout, self.is_training, self.is_musked,
                                  regularizer_conv=regu_conv, is_merge_bn=self.meta_val('is_merge_bn'), has_bias=False)
 
+        def get_ib(y, layer_type, kl_mult):
+            if self.prune_method == 'info_bottle':
+                ib_layer = InformationBottleneckLayer(y, layer_type=layer_type, weight_dict=self.weight_dict,
+                                                      is_training=self.is_training, kl_mult=kl_mult,
+                                                      mask_threshold=self.prune_threshold)
+                self.layers.append(ib_layer)
+                y, ib_kld = ib_layer.layer_output
+                self.kl_total += ib_kld
+            return y
+
         self.layers.clear()
         with tf.variable_scope(self.task_name, reuse=tf.AUTO_REUSE):
             x = self.X
@@ -337,15 +347,16 @@ class VGG_Combined(BaseModel):
                             self.layers.append(conv)
                             y_A = conv.layer_output
 
-                            if self.prune_method == 'info_bottle':
-                                ib_layer = InformationBottleneckLayer(y_A, layer_type='C_ib',
-                                                                      weight_dict=self.weight_dict,
-                                                                      is_training=self.is_training,
-                                                                      kl_mult=kl_mult,
-                                                                      mask_threshold=self.prune_threshold)
-                                self.layers.append(ib_layer)
-                                y_A, ib_kld = ib_layer.layer_output
-                                self.kl_total += ib_kld
+                            y_A = get_ib(y_A, 'C_ib', kl_mult)
+                            # if self.prune_method == 'info_bottle':
+                            #     ib_layer = InformationBottleneckLayer(y_A, layer_type='C_ib',
+                            #                                           weight_dict=self.weight_dict,
+                            #                                           is_training=self.is_training,
+                            #                                           kl_mult=kl_mult,
+                            #                                           mask_threshold=self.prune_threshold)
+                            #     self.layers.append(ib_layer)
+                            #     y_A, ib_kld = ib_layer.layer_output
+                            #     self.kl_total += ib_kld
 
                     if get_signal(layer_index, 'AB'):
                         with tf.variable_scope(conv_name + '/AB'):
@@ -353,15 +364,16 @@ class VGG_Combined(BaseModel):
                             self.layers.append(conv)
                             y_AB = conv.layer_output
 
-                            if self.prune_method == 'info_bottle':
-                                ib_layer = InformationBottleneckLayer(y_AB, layer_type='C_ib',
-                                                                      weight_dict=self.weight_dict,
-                                                                      is_training=self.is_training,
-                                                                      kl_mult=kl_mult,
-                                                                      mask_threshold=self.prune_threshold)
-                                self.layers.append(ib_layer)
-                                y_AB, ib_kld = ib_layer.layer_output
-                                self.kl_total += ib_kld
+                            y_AB = get_ib(y_AB, 'C_ib', kl_mult)
+                            # if self.prune_method == 'info_bottle':
+                            #     ib_layer = InformationBottleneckLayer(y_AB, layer_type='C_ib',
+                            #                                           weight_dict=self.weight_dict,
+                            #                                           is_training=self.is_training,
+                            #                                           kl_mult=kl_mult,
+                            #                                           mask_threshold=self.prune_threshold)
+                            #     self.layers.append(ib_layer)
+                            #     y_AB, ib_kld = ib_layer.layer_output
+                            #     self.kl_total += ib_kld
 
                     if get_signal(layer_index, 'B'):
                         with tf.variable_scope(conv_name + '/B'):
@@ -369,15 +381,16 @@ class VGG_Combined(BaseModel):
                             self.layers.append(conv)
                             y_B = conv.layer_output
 
-                            if self.prune_method == 'info_bottle':
-                                ib_layer = InformationBottleneckLayer(y_B, layer_type='C_ib',
-                                                                      weight_dict=self.weight_dict,
-                                                                      is_training=self.is_training,
-                                                                      kl_mult=kl_mult,
-                                                                      mask_threshold=self.prune_threshold)
-                                self.layers.append(ib_layer)
-                                y_B, ib_kld = ib_layer.layer_output
-                                self.kl_total += ib_kld
+                            y_B = get_ib(y_B, 'C_ib', kl_mult)
+                            # if self.prune_method == 'info_bottle':
+                            #     ib_layer = InformationBottleneckLayer(y_B, layer_type='C_ib',
+                            #                                           weight_dict=self.weight_dict,
+                            #                                           is_training=self.is_training,
+                            #                                           kl_mult=kl_mult,
+                            #                                           mask_threshold=self.prune_threshold)
+                            #     self.layers.append(ib_layer)
+                            #     y_B, ib_kld = ib_layer.layer_output
+                            #     self.kl_total += ib_kld
 
                     layer_index += 1
 
@@ -400,15 +413,16 @@ class VGG_Combined(BaseModel):
                             self.layers.append(conv)
                             y_A = tf.nn.relu(conv.layer_output)
 
-                            if self.prune_method == 'info_bottle':
-                                ib_layer = InformationBottleneckLayer(y_A, layer_type='C_ib',
-                                                                      weight_dict=self.weight_dict,
-                                                                      is_training=self.is_training,
-                                                                      kl_mult=kl_mult,
-                                                                      mask_threshold=self.prune_threshold)
-                                self.layers.append(ib_layer)
-                                y_A, ib_kld = ib_layer.layer_output
-                                self.kl_total += ib_kld
+                            y_A = get_ib(y_A, 'C_ib', kl_mult)
+                            # if self.prune_method == 'info_bottle':
+                            #     ib_layer = InformationBottleneckLayer(y_A, layer_type='C_ib',
+                            #                                           weight_dict=self.weight_dict,
+                            #                                           is_training=self.is_training,
+                            #                                           kl_mult=kl_mult,
+                            #                                           mask_threshold=self.prune_threshold)
+                            #     self.layers.append(ib_layer)
+                            #     y_A, ib_kld = ib_layer.layer_output
+                            #     self.kl_total += ib_kld
 
                     # AB
                     if get_signal(layer_index, 'AB'):
@@ -437,13 +451,16 @@ class VGG_Combined(BaseModel):
 
                             y_AB = tf.nn.relu(y_from_A + y_from_AB + y_from_B)
 
-                            if self.prune_method == 'info_bottle':
-                                ib_layer = InformationBottleneckLayer(y_AB, layer_type='C_ib', weight_dict=self.weight_dict,
-                                                                      is_training=self.is_training,
-                                                                      kl_mult=kl_mult, mask_threshold=self.prune_threshold)
-                                self.layers.append(ib_layer)
-                                y_AB, ib_kld = ib_layer.layer_output
-                                self.kl_total += ib_kld
+                            y_AB = get_ib(y_AB, 'C_ib', kl_mult)
+                            # if self.prune_method == 'info_bottle':
+                            #     ib_layer = InformationBottleneckLayer(y_AB, layer_type='C_ib',
+                            #                                           weight_dict=self.weight_dict,
+                            #                                           is_training=self.is_training,
+                            #                                           kl_mult=kl_mult,
+                            #                                           mask_threshold=self.prune_threshold)
+                            #     self.layers.append(ib_layer)
+                            #     y_AB, ib_kld = ib_layer.layer_output
+                            #     self.kl_total += ib_kld
 
                     # B
                     if get_signal(layer_index, 'B'):
@@ -460,15 +477,16 @@ class VGG_Combined(BaseModel):
                             self.layers.append(conv)
                             y_B = tf.nn.relu(conv.layer_output)
 
-                            if self.prune_method == 'info_bottle':
-                                ib_layer = InformationBottleneckLayer(y_B, layer_type='C_ib',
-                                                                      weight_dict=self.weight_dict,
-                                                                      is_training=self.is_training,
-                                                                      kl_mult=kl_mult,
-                                                                      mask_threshold=self.prune_threshold)
-                                self.layers.append(ib_layer)
-                                y_B, ib_kld = ib_layer.layer_output
-                                self.kl_total += ib_kld
+                            y_B = get_ib(y_B, 'C_ib', kl_mult)
+                            # if self.prune_method == 'info_bottle':
+                            #     ib_layer = InformationBottleneckLayer(y_B, layer_type='C_ib',
+                            #                                           weight_dict=self.weight_dict,
+                            #                                           is_training=self.is_training,
+                            #                                           kl_mult=kl_mult,
+                            #                                           mask_threshold=self.prune_threshold)
+                            #     self.layers.append(ib_layer)
+                            #     y_B, ib_kld = ib_layer.layer_output
+                            #     self.kl_total += ib_kld
 
                     layer_index += 1
 
@@ -513,13 +531,14 @@ class VGG_Combined(BaseModel):
                         self.layers.append(fc_layer)
                         y_A = tf.nn.relu(fc_layer.layer_output)
 
-                        if self.prune_method == 'info_bottle':
-                            ib_layer = InformationBottleneckLayer(y_A, layer_type='F_ib', weight_dict=self.weight_dict,
-                                                                  is_training=self.is_training,
-                                                                  kl_mult=kl_mult, mask_threshold=self.prune_threshold)
-                            self.layers.append(ib_layer)
-                            y_A, ib_kld = ib_layer.layer_output
-                            self.kl_total += ib_kld
+                        y_A = get_ib(y_A, 'F_ib', kl_mult)
+                        # if self.prune_method == 'info_bottle':
+                        #     ib_layer = InformationBottleneckLayer(y_A, layer_type='F_ib', weight_dict=self.weight_dict,
+                        #                                           is_training=self.is_training,
+                        #                                           kl_mult=kl_mult, mask_threshold=self.prune_threshold)
+                        #     self.layers.append(ib_layer)
+                        #     y_A, ib_kld = ib_layer.layer_output
+                        #     self.kl_total += ib_kld
 
                 # AB
                 if get_signal(layer_index, 'AB'):
@@ -551,13 +570,14 @@ class VGG_Combined(BaseModel):
 
                         y_AB = tf.nn.relu(y_from_A + y_from_AB + y_from_B)
 
-                        if self.prune_method == 'info_bottle':
-                            ib_layer = InformationBottleneckLayer(y_AB, layer_type='F_ib', weight_dict=self.weight_dict,
-                                                                  is_training=self.is_training,
-                                                                  kl_mult=kl_mult, mask_threshold=self.prune_threshold)
-                            self.layers.append(ib_layer)
-                            y_AB, ib_kld = ib_layer.layer_output
-                            self.kl_total += ib_kld
+                        y_AB = get_ib(y_AB, 'F_ib', kl_mult)
+                        # if self.prune_method == 'info_bottle':
+                        #     ib_layer = InformationBottleneckLayer(y_AB, layer_type='F_ib', weight_dict=self.weight_dict,
+                        #                                           is_training=self.is_training,
+                        #                                           kl_mult=kl_mult, mask_threshold=self.prune_threshold)
+                        #     self.layers.append(ib_layer)
+                        #     y_AB, ib_kld = ib_layer.layer_output
+                        #     self.kl_total += ib_kld
 
                 # B
                 if get_signal(layer_index, 'B'):
@@ -573,13 +593,14 @@ class VGG_Combined(BaseModel):
                                                           regularizer_fc=self.regularizer_fc)
                         y_B = tf.nn.relu(fc_layer.layer_output)
 
-                        if self.prune_method == 'info_bottle':
-                            ib_layer = InformationBottleneckLayer(y_B, layer_type='F_ib', weight_dict=self.weight_dict,
-                                                                  is_training=self.is_training,
-                                                                  kl_mult=kl_mult, mask_threshold=self.prune_threshold)
-                            self.layers.append(ib_layer)
-                            y_B, ib_kld = ib_layer.layer_output
-                            self.kl_total += ib_kld
+                        y_B = get_ib(y_B, 'F_ib', kl_mult)
+                        # if self.prune_method == 'info_bottle':
+                        #     ib_layer = InformationBottleneckLayer(y_B, layer_type='F_ib', weight_dict=self.weight_dict,
+                        #                                           is_training=self.is_training,
+                        #                                           kl_mult=kl_mult, mask_threshold=self.prune_threshold)
+                        #     self.layers.append(ib_layer)
+                        #     y_B, ib_kld = ib_layer.layer_output
+                        #     self.kl_total += ib_kld
 
                 # Record the output of last layer
                 if get_signal(layer_index, 'A'):
@@ -637,9 +658,15 @@ class VGG_Combined(BaseModel):
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
         with tf.control_dependencies(update_ops):
             with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
+                # Create a optimizer
                 self.opt = tf.train.MomentumOptimizer(learning_rate=self.config.learning_rate, momentum=0.9,
                                                       use_nesterov=True)
-                # self.opt = tf.train.GradientDescentOptimizer(learning_rate=self.config.learning_rate)
+
+                # grads_and_vars is a list of tuples
+                # grads_vars = self.opt.compute_gradients(self.op_loss, <>)
+
+                # Ask the optimizer to apply the capped gradients
+                # self.opt.apply_gradients(capped_grads_and_vars)
 
                 self.op_opt = self.opt.minimize(self.op_loss)
 
