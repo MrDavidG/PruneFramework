@@ -31,7 +31,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
 class VGG_Combined(BaseModel):
-    def __init__(self, config, task_name, weight_a, weight_b, cluster_res_list, signal_list, musk=False, gamma=1.):
+    def __init__(self, config, task_name, weight_a, weight_b, cluster_res_list, signal_list, musk=False, gamma=1.,
+                 ib_threshold=None):
         super(VGG_Combined, self).__init__(config)
 
         self.imgs_path = self.config.dataset_path + 'celeba/'
@@ -41,6 +42,9 @@ class VGG_Combined(BaseModel):
         self.task_name = task_name
         self.is_musked = musk
         self.gamma = gamma
+
+        if self.prune_method == 'info_bottle' and ib_threshold is not None:
+            self.prune_threshold = ib_threshold
 
         self.op_logits_a = None
         self.op_logits_b = None
@@ -144,7 +148,7 @@ class VGG_Combined(BaseModel):
                 if layer_name.startswith('conv'):
                     # A
                     if get_signal(layer_index, 'A'):
-                        in_list = A_last + A_last[:num_AB_from_a_last_layer]
+                        in_list = A_last + AB_last[:num_AB_from_a_last_layer]
                         weight_dict[layer_name + '/A/weights'] = np.concatenate((weight[:, :, in_list, :][:, :, :, A],
                                                                                  weight_variable((3, 3,
                                                                                                   num_AB_from_b_last_layer,
@@ -317,8 +321,9 @@ class VGG_Combined(BaseModel):
             return self.signal_list[layer_index][key]
 
         def get_conv(x, regu_conv, has_bias=True):
-            return ConvLayer(x, self.weight_dict, self.config.dropout, self.is_training, self.is_musked,
-                             regularizer_conv=regu_conv, is_merge_bn=self.meta_val('is_merge_bn'), has_bias=has_bias)
+            return ConvLayer(x, self.weight_dict, is_dropout=False, is_training=self.is_training,
+                             is_musked=self.is_musked, regularizer_conv=regu_conv,
+                             is_merge_bn=self.meta_val('is_merge_bn'), has_bias=has_bias)
 
         def get_ib(y, layer_type, kl_mult):
             if self.prune_method == 'info_bottle':
@@ -351,7 +356,7 @@ class VGG_Combined(BaseModel):
                         with tf.variable_scope(conv_name + '/A'):
                             conv = get_conv(x, regu_conv=self.regularizer_conv)
                             self.layers.append(conv)
-                            y_A = conv.layer_output
+                            y_A = tf.nn.relu(conv.layer_output)
 
                             y_A = get_ib(y_A, 'C_ib', kl_mult)
 
@@ -359,7 +364,7 @@ class VGG_Combined(BaseModel):
                         with tf.variable_scope(conv_name + '/AB'):
                             conv = get_conv(x, regu_conv=self.regularizer_conv)
                             self.layers.append(conv)
-                            y_AB = conv.layer_output
+                            y_AB = tf.nn.relu(conv.layer_output)
 
                             y_AB = get_ib(y_AB, 'C_ib', kl_mult)
 
@@ -367,11 +372,9 @@ class VGG_Combined(BaseModel):
                         with tf.variable_scope(conv_name + '/B'):
                             conv = get_conv(x, regu_conv=self.regularizer_conv)
                             self.layers.append(conv)
-                            y_B = conv.layer_output
+                            y_B = tf.nn.relu(conv.layer_output)
 
                             y_B = get_ib(y_B, 'C_ib', kl_mult)
-
-                    layer_index += 1
 
                 elif layer_set != 'pooling':
                     conv_name, kl_mult = layer_set
@@ -397,29 +400,30 @@ class VGG_Combined(BaseModel):
                     # AB
                     if get_signal(layer_index, 'AB'):
                         with tf.variable_scope(conv_name + '/AB'):
-                            y_from_A, y_from_AB, y_from_B = 0, 0, 0
-                            # if get_signal(layer_index, 'A'):
+                            # y_from_A, y_from_AB, y_from_B = 0, 0, 0
+                            # if get_signal(layer_index, 'fromA'):
                             #     with tf.variable_scope('A'):
                             #         # From A to AB
                             #         conv_A = get_conv(y_A_last, self.regularizer_decay, has_bias=False)
                             #         self.layers.append(conv_A)
                             #         y_from_A = conv_A.layer_output
 
-                            if get_signal(layer_index, 'AB'):
+                            if get_signal(layer_index, 'fromAB'):
                                 with tf.variable_scope('AB'):
                                     # From AB to AB
                                     conv_AB = get_conv(y_AB_last, self.regularizer_conv)
                                     self.layers.append(conv_AB)
                                     y_from_AB = conv_AB.layer_output
 
-                            # if get_signal(layer_index, 'B'):
+                            # if get_signal(layer_index, 'fromB'):
                             #     with tf.variable_scope('B'):
                             #         # From B to AB
                             #         conv_B = get_conv(y_B_last, self.regularizer_decay, has_bias=False)
                             #         self.layers.append(conv_B)
                             #         y_from_B = conv_B.layer_output
 
-                            y_AB = tf.nn.relu(y_from_A + y_from_AB + y_from_B)
+                            # y_AB = tf.nn.relu(y_from_A + y_from_AB + y_from_B)
+                            y_AB = tf.nn.relu(y_from_AB)
 
                             y_AB = get_ib(y_AB, 'C_ib', kl_mult)
 
@@ -440,9 +444,7 @@ class VGG_Combined(BaseModel):
 
                             y_B = get_ib(y_B, 'C_ib', kl_mult)
 
-                    layer_index += 1
-
-                else:
+                elif layer_set == 'pooling':
                     if get_signal(layer_index, 'A'):
                         y_A = tf.nn.max_pool(y_A_last, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
                     if get_signal(layer_index, 'AB'):
@@ -450,13 +452,16 @@ class VGG_Combined(BaseModel):
                     if get_signal(layer_index, 'A'):
                         y_B = tf.nn.max_pool(y_B_last, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
 
-                # Record the output of last layer
+                # Record the output of this layer
                 if get_signal(layer_index, 'A'):
                     y_A_last = y_A
                 if get_signal(layer_index, 'AB'):
                     y_AB_last = y_AB
                 if get_signal(layer_index, 'B'):
                     y_B_last = y_B
+
+                if layer_set != 'pooling':
+                    layer_index += 1
 
             # From conv to fc layer
             if get_signal(layer_index, 'A'):
@@ -483,7 +488,7 @@ class VGG_Combined(BaseModel):
                         self.layers.append(fc_layer)
                         y_A = tf.nn.relu(fc_layer.layer_output)
 
-                        y_A = get_ib(y_A, 'F_ib', kl_mult)
+                        y_A = get_ib(y_A, 'F_ib', self.gamma)
 
                 # AB
                 if get_signal(layer_index, 'AB'):
@@ -515,7 +520,7 @@ class VGG_Combined(BaseModel):
 
                         y_AB = tf.nn.relu(y_from_A + y_from_AB + y_from_B)
 
-                        y_AB = get_ib(y_AB, 'F_ib', kl_mult)
+                        y_AB = get_ib(y_AB, 'F_ib', self.gamma)
 
                 # B
                 if get_signal(layer_index, 'B'):
@@ -531,7 +536,7 @@ class VGG_Combined(BaseModel):
                                                           regularizer_fc=self.regularizer_fc)
                         y_B = tf.nn.relu(fc_layer.layer_output)
 
-                        y_B = get_ib(y_B, 'F_ib', kl_mult)
+                        y_B = get_ib(y_B, 'F_ib', self.gamma)
 
                 # Record the output of last layer
                 if get_signal(layer_index, 'A'):
@@ -688,8 +693,9 @@ class VGG_Combined(BaseModel):
                         feed_dict={self.is_training: True})
                     total_kl += kl
                 else:
-                    _, loss, accuracy_batch = sess.run([self.op_opt, self.op_loss, self.op_accuracy],
-                                                       feed_dict={self.is_training: True})
+                    _, loss, accu_batch, accu_batch_a, accu_batch_b = sess.run(
+                        [self.op_opt, self.op_loss, self.op_accuracy, self.op_accuracy_a, self.op_accuracy_b],
+                        feed_dict={self.is_training: True})
                 step += 1
                 total_loss += loss
                 total_correct_preds += accu_batch

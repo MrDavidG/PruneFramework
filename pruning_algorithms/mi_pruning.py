@@ -25,6 +25,8 @@ import numpy as np
 import pickle
 import os
 
+from pruning_algorithms.baseline_pruning import get_weight_combine
+
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
@@ -108,7 +110,7 @@ def argmin_marginal_mi(layer_output, F, neuron_list_previous, labelixs, method_m
     return min_index_neuron, mi_min
 
 
-def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu_decay):
+def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu_decay, ib_threshold, o_a, o_b):
     """
     Rebuild the combined model and train.
     :param weight_a: weight dictionary of model a
@@ -119,7 +121,8 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     :param regu_decay: regularizer for A->AB and B->AB
     :return:
     """
-    config = process_config("../configs/ib_vgg.json")
+    # config = process_config("../configs/vgg_net.json")
+    config = process_config("../configs/vgg_for_layer_output.json")
     gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True
 
@@ -127,7 +130,8 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     print('[%s] Rebuild VGG model on task %s' % (datetime.now(), task_name))
 
     tf.reset_default_graph()
-    session = tf.Session(config=gpu_config)
+    # session = tf.Session(config=gpu_config)
+    session = tf.InteractiveSession(config=gpu_config)
 
     # Set training params
     training = tf.placeholder(dtype=tf.bool, name='training')
@@ -135,19 +139,33 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     regularizer_decay = tf.contrib.layers.l2_regularizer(scale=regu_decay * 1.)
 
     # Rebuild model
-    model = VGG_Combined(config, task_name, weight_a, weight_b, cluster_res_list, signal_list, musk=False, gamma=gamma)
+    model = VGG_Combined(config, task_name, weight_a, weight_b, cluster_res_list, signal_list, musk=False, gamma=gamma,
+                         ib_threshold=ib_threshold)
     model.set_global_tensor(training, regularizer_zero, regularizer_decay, regularizer_zero)
     model.build()
 
+
     # Train
     session.run(tf.global_variables_initializer())
-    model.eval_once(session, model.test_init, -1)
+    # TODO: test
+    session.run(model.test_init)
 
-    model.train(sess=session, n_epochs=10, task_name='AB', lr=0.1)
-    model.train(sess=session, n_epochs=10, task_name='B', lr=0.1)
-    model.train(sess=session, n_epochs=100, task_name='A', lr=0.01)
-    model.train(sess=session, n_epochs=80, task_name='A', lr=0.001)
-    model.train(sess=session, n_epochs=80, task_name='A', lr=0.0001)
+    # Graph
+    summary_writer = tf.summary.FileWriter('/local/home/david/log/', session.graph)
+
+    # model.eval_once(session, model.test_init, -1)
+
+    layers_name = [layer.layer_name for layer in model.layers]
+    layers_output, x = session.run([[layer.layer_output for layer in model.layers]] + [model.X],
+                                   feed_dict={model.is_training: False})
+    #
+    print('Stop here')
+
+    # model.train(sess=session, n_epochs=10, task_name='AB', lr=0.1)
+    # model.train(sess=session, n_epochs=10, task_name='B', lr=0.1)
+    # model.train(sess=session, n_epochs=100, task_name='A', lr=0.01)
+    # model.train(sess=session, n_epochs=80, task_name='A', lr=0.001)
+    # model.train(sess=session, n_epochs=80, task_name='A', lr=0.0001)
 
 
 def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_threshold, method_mi, dim_list, N_total=1,
@@ -302,7 +320,7 @@ def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_thr
     return cluster_res_list
 
 
-def get_layers_output(task_name, model_path):
+def get_layers_output(task_name, model_path, with_relu=True):
     """
     Get the weight dictionary, output of each layer (except output layer)
     and labels.
@@ -332,13 +350,15 @@ def get_layers_output(task_name, model_path):
     sess.run(tf.global_variables_initializer())
     sess.run(model.test_init)
 
-    layers_output_tf = [layer.layer_output for layer in model.layers[:-1]]
-    layers_output, labels = sess.run([layers_output_tf] + [model.Y],
-                                     feed_dict={model.is_training: False})
+    # layers_output_tf = [layer.layer_output for layer in model.layers[:-1]]
+    layers_output_tf = [layer.layer_output for layer in model.layers]
+    layers_output, labels, input = sess.run([layers_output_tf] + [model.Y] + [model.X],
+                                            feed_dict={model.is_training: False})
 
-    layers_output = [x * (x > 0) for x in layers_output]
+    if with_relu:
+        layers_output = [x * (x > 0) for x in layers_output]
 
-    return model.weight_dict, layers_output, labels
+    return model.weight_dict, layers_output, labels, input
 
 
 def get_connection_signal(cluster_res_list, dim_list):
@@ -421,10 +441,12 @@ if __name__ == '__main__':
                 4096, 4096, 20]
 
     print('[%s] Obtain model weights, layers output and labels' % (datetime.now()))
-    weight_dict_a, layers_output_list_a, y_a = get_layers_output('celeba1',
-                                                                 model_path='/local/home/david/Remote/models/model_weights/vgg_celeba1_fix_conv_0.889316')
-    weight_dict_b, layers_output_list_b, y_b = get_layers_output('celeba2',
-                                                                 model_path='/local/home/david/Remote/models/model_weights/vgg_celeba2_fix_conv_0.873415')
+    weight_dict_a, layers_output_list_a, y_a, input_a = get_layers_output('celeba1',
+                                                                          model_path='/local/home/david/Remote/models/model_weights/vgg_celeba1_fix_conv_0.889316',
+                                                                          with_relu=False)
+    weight_dict_b, layers_output_list_b, y_b, input_b = get_layers_output('celeba2',
+                                                                          model_path='/local/home/david/Remote/models/model_weights/vgg_celeba2_fix_conv_0.873415',
+                                                                          with_relu=False)
 
     # print('[%s] Divide neurons in each layer into clusters A, B and AB' % (datetime.now()))
     # cluster_res_list = combine_models(y_a, y_b, layers_output_list_a, layers_output_list_b, alpha_threshold=1,
@@ -443,7 +465,7 @@ if __name__ == '__main__':
         # Init T^A, T^B and T^AB to store clusters for each layer
         cluster_layer_dict['A'] = list()
         cluster_layer_dict['B'] = list()
-        cluster_layer_dict['AB'] = np.arange(num_neuron_total).tolist()
+        cluster_layer_dict['AB'] = [x for x in range(dim_list[layer_index] * 2)]
         cluster_res_list += [cluster_layer_dict]
     # Output layer
     cluster_layer_dict = dict()
@@ -469,4 +491,5 @@ if __name__ == '__main__':
     signal_list = get_connection_signal(cluster_res_list, dim_list)
 
     print('[%s] Rebuild and train the combined model' % (datetime.now()))
-    rebuild_model(weight_dict_a, weight_dict_b, cluster_res_list, signal_list, gamma=20, regu_decay=0)
+    rebuild_model(weight_dict_a, weight_dict_b, cluster_res_list, signal_list, gamma=20, regu_decay=0, ib_threshold=0.5,
+                  o_a=layers_output_list_a, o_b=layers_output_list_b)

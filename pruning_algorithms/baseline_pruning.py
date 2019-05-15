@@ -121,7 +121,7 @@ def baseline1(model_path_1, model_path_2, type_init):
 
     # Retrain with VIB
     print('[%s] Retrain the combined model' % (datetime.now()))
-    config = process_config("../configs/ib_vgg.json")
+    config = process_config("../configs/vgg_net.json")
     gpu_config = tf.ConfigProto()
     gpu_config.gpu_options.allow_growth = True
 
@@ -155,6 +155,6 @@ def baseline1(model_path_1, model_path_2, type_init):
 
 
 if __name__ == '__main__':
-    baseline1(model_path_1='/local/home/david/Remote/models/model_weights/vgg_celeba1_0.889316',
-              model_path_2='/local/home/david/Remote/models/model_weights/vgg_celeba2_0.873415',
+    baseline1(model_path_1='/local/home/david/Remote/models/model_weights/vgg_celeba1_fix_conv_0.889316',
+              model_path_2='/local/home/david/Remote/models/model_weights/vgg_celeba2_fix_conv_0.873415',
               type_init='ZERO')

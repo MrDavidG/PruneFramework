@@ -1,6 +1,6 @@
 {
   "exp_name": "test",
-  "batch_size": 1000,
+  "batch_size": 100,
   "cpu_cores": 8,
   "skip_step": 100,
   "learning_rate": 0.01,
