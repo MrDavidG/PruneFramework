@@ -18,7 +18,7 @@ from utils.mutual_information import kde_mi, bin_mi, kde_mi_independent, kde_mi_
 from models.vgg_combine import VGG_Combined
 from models.vgg_celeba import VGGNet
 from utils.config import process_config
-from utils.mi_gpu import kde_gpu, get_K_function
+from utils.mi_gpu import kde_gpu, get_K_function, kde_in_gpu
 from datetime import datetime
 
 import tensorflow as tf
@@ -65,7 +65,8 @@ def argmin_mi(layer_output, labelixs, method_mi, binsize, labelprobs=None, label
             _, mi_neuron = kde_gpu(layer_output_expand, labelixs=labelixs, labelprobs=labelprobs,
                                    entropy_func_upper=entropy_func_upper)
         elif method_mi == 'kde_in':
-            mi_neuron = kde_mi_independent(layer_output_expand, labels)
+            # mi_neuron = kde_mi_independent(layer_output_expand, labels)
+            _, mi_neuron = kde_in_gpu(layer_output_expand, labelixs, labelprobs, entropy_func_upper)
         elif method_mi == 'kde_cus':
             _, mi_neuron = kde_mi_cus(layer_output_expand, labels_unique, labels_count, labels_inverse)
 
@@ -117,7 +118,8 @@ def argmin_marginal_mi(layer_output, F, neuron_list_previous, labelixs, method_m
                                    entropy_func_upper=entropy_func_upper)
         elif method_mi == 'kde_in':
             # 当成20个彼此之间独立的label
-            mi_neuron = kde_mi_independent(layer_output_expand, labels)
+            # mi_neuron = kde_mi_independent(layer_output_expand, labels)
+            _, mi_neuron = kde_in_gpu(layer_output_expand, labelixs, labelprobs, entropy_func_upper)
         elif method_mi == 'kde_cus':
             # 自己实现的kde方法，主要针对2^20unique label的场景
             _, mi_neuron = kde_mi_cus(layer_output_expand, labels_unique, labels_count, labels_inverse)
@@ -196,34 +198,66 @@ def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_thr
     num_label_b = y_b.shape[1]
 
     # 获得Y_A和Y_B统计信息
+    labelixs_a, labelprobs_a = None, None
+    unique_value_a, unique_counts_a, unique_inverse_a = None, None, None
+
+    labelixs_b, labelprobs_b = None, None
+    unique_value_b, unique_counts_b, unique_inverse_b = None, None, None
+
+    entropy_func_upper = None
+
     # 'kde_in'的方法不需要
-    if method_mi in ['kde', 'kde_gpu', 'kde_cus', 'bin']:
-        # For Y_A
-        uniqueids_a = np.ascontiguousarray(y_a).view(np.dtype((np.void, y_a.dtype.itemsize * y_a.shape[1])))
-        unique_value_a, unique_inverse_a, unique_counts_a = np.unique(uniqueids_a, return_index=False,
-                                                                      return_inverse=True, return_counts=True)
-        # 每一个独特的行（label）在整体中出现的概率，相当于labelprobs
-        labelprobs_a = np.asarray(unique_counts_a / float(sum(unique_counts_a)))
-        # 每一个独特的行（label）在整体中出现的位置
-        labelixs_a = {}
-        for label_index, label_value in enumerate(unique_value_a):
-            labelixs_a[label_index] = unique_inverse_a == label_index
-
-        # For Y_B
-        uniqueids_b = np.ascontiguousarray(y_b).view(np.dtype((np.void, y_b.dtype.itemsize * y_b.shape[1])))
-        unique_value_b, unique_inverse_b, unique_counts_b = np.unique(uniqueids_b, return_index=False,
-                                                                      return_inverse=True, return_counts=True)
-
-        labelprobs_b = np.asarray(unique_counts_b / float(sum(unique_counts_b)))
-
-        labelixs_b = {}
-        for label_index, label_value in enumerate(unique_value_b):
-            labelixs_b[label_index] = unique_inverse_b == label_index
+    if method_mi in ['kde', 'kde_gpu', 'kde_cus', 'bin', 'kde_in']:
+        # # For Y_A
+        # uniqueids_a = np.ascontiguousarray(y_a).view(np.dtype((np.void, y_a.dtype.itemsize * y_a.shape[1])))
+        # unique_value_a, unique_inverse_a, unique_counts_a = np.unique(uniqueids_a, return_index=False,
+        #                                                               return_inverse=True, return_counts=True)
+        # # 每一个独特的行（label）在整体中出现的概率，相当于labelprobs
+        # labelprobs_a = np.asarray(unique_counts_a / float(sum(unique_counts_a)))
+        # # 每一个独特的行（label）在整体中出现的位置
+        # labelixs_a = {}
+        # for label_index, label_value in enumerate(unique_value_a):
+        #     labelixs_a[label_index] = unique_inverse_a == label_index
+        #
+        # # For Y_B
+        # uniqueids_b = np.ascontiguousarray(y_b).view(np.dtype((np.void, y_b.dtype.itemsize * y_b.shape[1])))
+        # unique_value_b, unique_inverse_b, unique_counts_b = np.unique(uniqueids_b, return_index=False,
+        #                                                               return_inverse=True, return_counts=True)
+        #
+        # labelprobs_b = np.asarray(unique_counts_b / float(sum(unique_counts_b)))
+        #
+        # labelixs_b = {}
+        # for label_index, label_value in enumerate(unique_value_b):
+        #     labelixs_b[label_index] = unique_inverse_b == label_index
 
         # For gpu
-        entropy_func_upper = None
-        if method_mi == 'kde_gpu':
-            entropy_func_upper = get_K_function()
+
+        entropy_func_upper = get_K_function()
+
+        labelixs_a = list()
+        labelprobs_a = list()
+        for label_index in range(y_a.shape[1]):
+            labelixs = {}
+            labelixs[0] = y_a[:, label_index] == -1
+            labelixs[1] = y_a[:, label_index] == 1
+            labelixs_a.append(labelixs)
+
+            prob_label = np.mean((y_a[:, label_index] == 1).astype(np.float32), axis=0)
+            labelprobs = np.array([1 - prob_label, prob_label])
+            labelprobs_a.append(labelprobs)
+
+        labelixs_b = list()
+        labelprobs_b = list()
+        for label_index in range(y_b.shape[1]):
+            labelixs = {}
+            labelixs[0] = y_b[:, label_index] == -1
+            labelixs[1] = y_b[:, label_index] == 1
+            labelixs_b.append(labelixs)
+
+            prob_label = np.mean((y_b[:, label_index] == 1).astype(np.float32), axis=0)
+            labelprobs = np.array([1 - prob_label, prob_label])
+            labelprobs_b.append(labelprobs)
+
 
     # Record list of clusters for all layers
     cluster_res_list = list()
@@ -250,7 +284,7 @@ def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_thr
     cluster_res_list += [cluster_layer_dict]
 
     # The main loop
-    for layer_index in range(num_layer):
+    for layer_index in range(13, num_layer):
         print('[%s] Cluster layer %d' % (datetime.now(), layer_index))
         # Total number of neurons
         num_neuron_total = dim_list[layer_index] * 2
@@ -477,7 +511,7 @@ def pruning(model_path_1, model_path_2, alpha_threshold, method_mi, binsize, gam
                                       alpha_threshold=alpha_threshold, method_mi=method_mi, dim_list=dim_list,
                                       binsize=binsize)
 
-    pickle.dump(open('/local/home/david/Remote/models/model_weights/cluster_res_list', 'wb'))
+    pickle.dump(open('/local/home/david/Remote/models/model_weights/cluster_res_list_alpha-'+str(alpha_threshold), 'wb'))
 
     # TODO: 以下为test
     # cluster_res_list = list()
@@ -527,8 +561,8 @@ if __name__ == '__main__':
 
     pruning(model_path_1=path + 'vgg_celeba1_0.908977_best',
             model_path_2=path + 'vgg_celeba2_0.893588_best',
-            alpha_threshold=5,
-            method_mi='kde',
+            alpha_threshold=5.5,
+            method_mi='kde_in',
             binsize=0.5,
             gamma=10,
             ib_threshold=0.01)

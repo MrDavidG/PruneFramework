@@ -42,11 +42,13 @@ def entropy_estimator_kl(x, var):
     h = -K.mean(lprobs)
     return dims / 2 + h
 
+
 def get_K_function():
     Klayer_activity = K.placeholder(ndim=2)
     noise_variance = 1e-1
     entropy_func_upper = K.function([Klayer_activity, ], [entropy_estimator_kl(Klayer_activity, noise_variance), ])
     return entropy_func_upper
+
 
 def kde_gpu(hidden, labelixs, labelprobs, entropy_func_upper):
     h_upper = entropy_func_upper([hidden, ])[0]
@@ -59,3 +61,11 @@ def kde_gpu(hidden, labelixs, labelprobs, entropy_func_upper):
     MI_YM_upper = h_upper - hM_given_Y_upper
 
     return 0, MI_YM_upper
+
+
+def kde_in_gpu(hidden, labelixs, labelprobs, entropy_func_upper):
+    sum = 0
+    for j in range(len(labelixs)):
+        _, mi = kde_gpu(hidden, labelixs[j], labelprobs[j], entropy_func_upper)
+        sum += mi
+    return 0, sum

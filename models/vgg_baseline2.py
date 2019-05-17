@@ -92,7 +92,7 @@ class VGGNet(BaseModel):
                                  256, 256, 256,
                                  512, 512, 512,
                                  512, 512, 512,
-                                 4096, 4096])
+                                 4096, 4096]) * 2
             for i, name_layer in enumerate(['conv1_1', 'conv1_2',
                                             'conv2_1', 'conv2_2',
                                             'conv3_1', 'conv3_2', 'conv3_3',
@@ -408,7 +408,7 @@ if __name__ == '__main__':
     gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True
 
-    for task_name in ['celeba']:
+    for task_name in ['celeba2']:
         print('Training on task {:s}'.format(task_name))
         tf.reset_default_graph()
         # session for training
@@ -435,7 +435,8 @@ if __name__ == '__main__':
         model.train(sess=session, n_epochs=40, lr=0.0001)
 
 
-def exp_celeba(task_name_list, model_path=0, regularizer=0, is_vib=False, gamma=None):
+def exp_celeba(task_name_list, model_path=0, regularizer=0, is_vib=False, gamma=None, ib_threshold=None,
+               kl_factor=None):
     if is_vib:
         config = process_config("../configs/ib_vgg.json")
     else:

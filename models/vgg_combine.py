@@ -367,9 +367,9 @@ class VGG_Combined(BaseModel):
                                     conv_AB = get_conv(y_AB_last, self.regularizer_conv)
                                     self.layers.append(conv_AB)
 
-                                y_AB = tf.nn.relu(conv_AB.layer_output)
+                                    y_AB = tf.nn.relu(conv_AB.layer_output)
 
-                                y_AB = get_ib(y_AB, 'C_ib', kl_mult)
+                                    y_AB = get_ib(y_AB, 'C_ib', kl_mult)
 
                     # B
                     if get_signal(layer_index, 'B'):
@@ -444,9 +444,9 @@ class VGG_Combined(BaseModel):
                                                                  regularizer_fc=self.regularizer_fc)
                                 self.layers.append(fc_layer_AB)
 
-                            y_AB = tf.nn.relu(fc_layer_AB.layer_output)
+                                y_AB = tf.nn.relu(fc_layer_AB.layer_output)
 
-                            y_AB = get_ib(y_AB, 'F_ib', self.gamma)
+                                y_AB = get_ib(y_AB, 'F_ib', self.gamma)
 
                 # B
                 if get_signal(layer_index, 'B'):
@@ -751,11 +751,162 @@ class VGG_Combined(BaseModel):
             '\nTesting {}, val_acc={:%}, val_loss={:f}'.format(self.task_name, total_correct_preds / self.n_samples_val,
                                                                total_loss / n_batches))
 
+    def get_CR(self, sess, cluster_res_list):
+        layers_name = ['conv1_1', 'conv1_2',
+                       'conv2_1', 'conv2_2',
+                       'conv3_1', 'conv3_2', 'conv3_3',
+                       'conv4_1', 'conv4_2', 'conv4_3',
+                       'conv5_1', 'conv5_2', 'conv5_3',
+                       'fc6', 'fc7', 'fc8']
+
+        # 都是做mask之前的入度和出度
+        num_out_channel_dict = dict()
+        num_in_channel_dict = dict()
+
+        for layer_index, cluster_layer in enumerate(cluster_res_list):
+            layer_name = layers_name[layer_index]
+            num_A = len(cluster_layer['A'])
+            num_out_channel_dict[layer_name + '/A'] = num_A
+
+            num_AB = len(cluster_layer['AB'])
+            num_out_channel_dict[layer_name + '/AB'] = num_AB
+
+            num_B = len(cluster_layer['B'])
+            num_out_channel_dict[layer_name + '/B'] = num_B
+
+            if layer_index == 0:
+                num_in_channel_dict[layer_name + '/A'] = 3
+                num_in_channel_dict[layer_name + '/AB'] = 3
+                num_in_channel_dict[layer_name + '/B'] = 3
+            else:
+                num_A_last = len(cluster_res_list[layer_index]['A'])
+                num_AB_last = len(cluster_res_list[layer_index]['AB/AB'])
+                num_B_last = len(cluster_res_list[layer_index]['B'])
+
+                num_in_channel_dict[layer_name + '/A'] = num_A_last + num_AB_last
+                num_in_channel_dict[layer_name + '/AB/AB'] = num_AB_last
+                num_in_channel_dict[layer_name + '/B'] = num_AB_last + num_B_last
+
+        # 输出被prune的数量
+        masks = list()
+        layers_type = list()
+        layers_name_list = list()
+        for layer in self.layers:
+            if layer.layer_type == 'C_ib' or layer.layer_type == 'F_ib':
+                # 和musks是一一对应的关系
+                layers_name_list += [layer.layer_name]
+                layers_type += [layer.layer_type]
+                masks += [layer.get_mask(threshold=self.prune_threshold)]
+
+        # 获得具体的mask
+        masks = sess.run(masks)
+
+        # how many channels/dims are prune in each layer
+        prune_state = [np.sum(mask == 0) for mask in masks]
+
+        # 记录一下每一层的出度被剪枝了多少
+        out_prune_dict = dict()
+        for i, layer_name in enumerate(layers_name_list):
+            # 这一层被剪枝了多少
+            out_prune_dict[layer_name] = prune_state[i]
+
+        # 这一层被剪枝后剩下多少in
+        in_prune_dict = dict()
+        for i, layer_name in enumerate(layers_name_list):
+            if i == 0:
+                continue
+            layer_name_last = layers_name_list[i - 1]
+
+            # 输入被剪枝掉了多少
+            in_prune_dict[layer_name + '/A'] = out_prune_dict.get(layer_name_last + '/A', 0) + out_prune_dict.get(
+                layer_name_last + '/AB', 0)
+            if layer_name != 'fc8':
+                in_prune_dict[layer_name + '/AB'] = out_prune_dict.get(layer_name_last + '/AB', 0)
+            in_prune_dict[layer_name + '/B'] = out_prune_dict.get(layer_name_last + '/AB', 0) + out_prune_dict.get(
+                layer_name_last + '/B', 0)
+
+        total_params, pruned_params, remain_params = 0, 0, 0
+
+        for index, layer_name in enumerate(layers_name_list):
+            num_in = num_in_channel_dict[layer_name]
+            num_out = num_out_channel_dict[layer_name]
+
+            num_out_prune = pruned_params[index]
+            num_in_prune = in_prune_dict.get(layer_name)
+
+            if layers_type[index] == 'C_ib':
+                n_params = num_in * num_out * 9
+                n_remain = (num_in - num_in_prune) * (num_out - num_out_prune) * 9
+
+            elif layers_type[index] == 'F_ib':
+                n_params = num_in * num_out
+                n_remain = (num_in - num_in_prune) * (num_out - num_out_prune)
+
+            total_params += n_params
+            remain_params += n_remain
+            pruned_params += n_params - n_remain
+
+        # Obtain all masks
+        masks = list()
+        layers_type = list()
+        out_channel_list = list()
+        in_channel_list = list()
+        layers_name_list = list()
+        for layer in self.layers:
+            if layer.layer_type == 'C_ib' or layer.layer_type == 'F_ib':
+                layer_name = layer.layer_name
+                # 记录这一层的入度和出度
+                in_channel_list += [num_in_channel_dict[layer_name]]
+                out_channel_list += [num_out_channel_dict[layer_name]]
+
+                # 和musks是一一对应的关系
+                layers_name_list += [layer_name]
+
+                layers_type += [layer.layer_type]
+                masks += [layer.get_mask(threshold=self.prune_threshold)]
+
+        # 获得具体的mask
+        masks = sess.run(masks)
+
+        # how many channels/dims are prune in each layer
+        prune_state = [np.sum(mask == 0) for mask in masks]
+
+        # 记录一下每一层的入度被剪枝了多少
+        prune_state_dict = dict()
+        for i, layer_name in enumerate(layers_name_list):
+            # 这一层被剪枝了多少
+            prune_state_dict[layer_name] = prune_state[i]
+
+        total_params, pruned_params, remain_params = 0, 0, 0
+
+        for index, mask in masks:
+            num_out = out_channel_list[index]
+            num_in = in_channel_list[index]
+
+            if layers_type[index] == 'C_ib':
+                n_params = num_in * num_out * 9
+                n_remain = num_in * (num_out - prune_state[index]) * 9
+
+            elif layers_type[index] == 'F_ib':
+                n_params = num_in * num_out
+                n_remain = num_in * (num_out - prune_state[index])
+
+            total_params += n_params
+            remain_params += n_remain
+            pruned_params += n_params - n_remain
+
+        # two output layer
+        n_params_a = num_in_channel_dict['fc8/A'] * num_out_channel_dict['fc8/A']
+        n_params_b = num_in_channel_dict['fc8/B'] * num_out_channel_dict['fc8/B']
+        total_params += (n_params_a + n_params_b)
+
     def get_CR(self, sess):
+
         # Obtain all masks
         masks = list()
         for layer in self.layers:
             if layer.layer_type == 'C_ib' or layer.layer_type == 'F_ib':
+                layer.layer_name
                 masks += [layer.get_mask(threshold=self.prune_threshold)]
 
         masks = sess.run(masks)
@@ -800,3 +951,36 @@ class VGG_Combined(BaseModel):
               'Each layer pruned: {}'.format(total_params, pruned_params, remain_params,
                                              float(total_params - pruned_params) / total_params, prune_state))
         return float(total_params - pruned_params) / total_params
+
+    def get_flops(sess, model):
+        # Obtain all masks
+        masks = list()
+        layers_type = list()
+        for layer in model.layers:
+            if layer.layer_type == 'C_ib' or layer.layer_type == 'F_ib':
+                layers_type += [layer.layer_type]
+                masks += [layer.get_mask(threshold=model.prune_threshold)]
+
+        masks = sess.run(masks)
+
+        # how many channels/dims are prune in each layer
+        prune_state = [np.sum(mask == 0) for mask in masks]
+
+        # 原来的计算量
+        total_flops, remain_flops, pruned_flops = 0, 0, 0
+
+        for layer_index, num_mask in enumerate(prune_state):
+            C_in = model.layers[layer_index].weight_tensors[0].shape.as_list()[-2]
+            C_out = model.layers[layer_index].weight_tensors[0].shape.as_list()[-1]
+            if layers_type[layer_index] == 'C_ib':
+                # Feature map 大小
+                M = model.layers[layer_index].layer_output.shape.as_list()[1]
+                total_flops += 9 * C_in * M * M * C_out
+                pruned_flops += 9 * C_in * M * M * num_mask
+            elif layers_type[layer_index] == 'F_ib':
+                total_flops += (2 * C_in - 1) * C_out
+                pruned_flops += (2 * C_in - 1) * num_mask
+
+        print('Total Flops: {}, Pruned Flops: {}, Remaining Flops:{}, Remain/Total Flops:{}, '
+              'Each layer pruned: {}'.format(total_flops, pruned_flops, remain_flops,
+                                             float(total_flops - pruned_flops) / total_flops, prune_state))
