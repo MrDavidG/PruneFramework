@@ -94,8 +94,17 @@ class VGG_Combined(BaseModel):
                 res_list += [value * step + x for x in range(step)]
             return res_list
 
-        def del_offset(list_, offset):
-            return list(np.array(list_) - offset)
+        def get_expand(array, h=2, w=2, original_channel_num_a=512):
+            res_list = list()
+            step = h * w
+            for i in range(step):
+                for value in array:
+                    if value < original_channel_num_a:
+                        res_list += [value + i * original_channel_num_a]
+                    else:
+                        res_list += [
+                            (value - original_channel_num_a) + (i + step) * original_channel_num_a]
+            return res_list
 
         weight_dict = dict()
 
@@ -105,10 +114,9 @@ class VGG_Combined(BaseModel):
                                                   'conv4_1', 'conv4_2', 'conv4_3',
                                                   'conv5_1', 'conv5_2', 'conv5_3',
                                                   'fc6', 'fc7', 'fc8']):
-            # All weights and biases
-            weight = np.concatenate((weight_dict_a[layer_name + '/weights'], weight_dict_b[layer_name + '/weights']),
-                                    axis=-1)
-            bias = np.concatenate((weight_dict_a[layer_name + '/biases'], weight_dict_b[layer_name + '/biases']))
+            # All bias
+            bias = np.concatenate(
+                (weight_dict_a[layer_name + '/biases'], weight_dict_b[layer_name + '/biases'])).astype(np.float32)
 
             # Obtain neuron list
             A = cluster_res_list[layer_index]['A']
@@ -116,6 +124,9 @@ class VGG_Combined(BaseModel):
             B = cluster_res_list[layer_index]['B']
 
             if layer_index == 0:
+                weight = np.concatenate(
+                    (weight_dict_a[layer_name + '/weights'], weight_dict_b[layer_name + '/weights']), axis=-1).astype(
+                    np.float32)
                 # The first layer
                 if get_signal(layer_index, 'A'):
                     weight_dict[layer_name + '/A/weights'] = weight[:, :, :, A]
@@ -127,74 +138,52 @@ class VGG_Combined(BaseModel):
                     weight_dict[layer_name + '/B/weights'] = weight[:, :, :, B]
                     weight_dict[layer_name + '/B/biases'] = bias[B]
             else:
+                # Get all weights
+                weight_a = weight_dict_a[layer_name + '/weights']
+                weight_b = weight_dict_b[layer_name + '/weights']
+
+                shape_weight_a = np.shape(weight_a)
+                shape_weight_b = np.shape(weight_b)
+
+                if len(shape_weight_a) == 4:
+                    matrix_zero_left_down = np.zeros(shape=(3, 3, shape_weight_b[-2], shape_weight_a[-1]))
+                    matrix_zero_right_up = np.zeros(shape=(3, 3, shape_weight_a[-2], shape_weight_b[-1]))
+                else:
+                    matrix_zero_left_down = np.zeros(shape=(shape_weight_b[-2], shape_weight_a[-1]))
+                    matrix_zero_right_up = np.zeros(shape=(shape_weight_a[-2], shape_weight_b[-1]))
+
+                weight_up = np.concatenate((weight_a, matrix_zero_right_up), axis=-1)
+                weight_down = np.concatenate((matrix_zero_left_down, weight_b), axis=-1)
+                weight = np.concatenate((weight_up, weight_down), axis=-2).astype(np.float32)
+
                 # Obtain neuron list of last layer
                 A_last = cluster_res_list[layer_index - 1]['A']
                 AB_last = cluster_res_list[layer_index - 1]['AB']
                 B_last = cluster_res_list[layer_index - 1]['B']
 
-                # Number of neurons in last layer in combined model
-                num_A_last_layer = len(A_last)
-                num_B_last_layer = len(B_last)
-                num_AB_from_a_last_layer = (np.array(AB_last) < dim_list[layer_index - 1]).sum()
-                num_AB_from_b_last_layer = len(AB_last) - num_AB_from_a_last_layer
-
-                # Number of neurons in this layer
-                num_A = len(A)
-                num_B = len(B)
-                num_AB_from_a = (np.array(AB) < dim_list[layer_index]).sum()
-                num_AB_from_b = len(AB) - num_AB_from_a
-
                 # Init weights
                 if layer_name.startswith('conv'):
                     # A
                     if get_signal(layer_index, 'A'):
-                        in_list = A_last + AB_last[:num_AB_from_a_last_layer]
-                        weight_dict[layer_name + '/A/weights'] = np.concatenate((weight[:, :, in_list, :][:, :, :, A],
-                                                                                 weight_variable((3, 3,
-                                                                                                  num_AB_from_b_last_layer,
-                                                                                                  num_A))), axis=2)
+                        weight_dict[layer_name + '/A/weights'] = weight[:, :, A_last + AB_last, :][:, :, :, A]
 
                     # AB
                     if get_signal(layer_index, 'AB'):
                         # From A to AB
                         if get_signal(layer_index, 'fromA'):
-                            weight_dict[layer_name + '/AB/A/weights'] = np.concatenate(
-                                (weight[:, :, A_last, :][:, :, :,
-                                 AB[:num_AB_from_a]],
-                                 weight_variable((3, 3,
-                                                  num_A_last_layer,
-                                                  num_AB_from_b))),
-                                axis=-1)
+                            weight_dict[layer_name + '/AB/A/weights'] = weight[:, :, A_last, :][:, :, :, AB]
 
                         # From AB to AB
                         if get_signal(layer_index, 'fromAB'):
-                            weight_AB_part_a = np.concatenate(
-                                (weight[:, :, AB_last[:num_AB_from_a_last_layer], :][:, :, :,
-                                 AB[:num_AB_from_a]],
-                                 weight_variable(
-                                     (3, 3, num_AB_from_b_last_layer, num_AB_from_a))),
-                                axis=2)
-
-                            # 必须是在第3个维度，并且是b model的部分的时候需要del_offset
-                            weight_AB_part_b = np.concatenate((weight_variable(
-                                (3, 3, num_AB_from_a_last_layer, num_AB_from_b)), weight[:, :, del_offset(
-                                AB_last[num_AB_from_a_last_layer:], dim_list[layer_index - 1]), :][:, :, :,
-                                                                                  AB[num_AB_from_a:]]), axis=2)
-                            weight_dict[layer_name + '/AB/AB/weights'] = np.concatenate(
-                                (weight_AB_part_a, weight_AB_part_b), axis=-1)
+                            weight_dict[layer_name + '/AB/AB/weights'] = weight[:, :, AB_last, :][:, :, :, AB]
 
                         # From B to AB
                         if get_signal(layer_index, 'fromB'):
-                            weight_dict[layer_name + '/AB/B/weights'] = np.concatenate((weight_variable(
-                                (3, 3, num_B_last_layer, num_AB_from_a)), weight[:, :,
-                                                                          del_offset(B_last, dim_list[layer_index - 1]),
-                                                                          :][:, :, :, AB[num_AB_from_a:]]), axis=-1)
+                            weight_dict[layer_name + '/AB/B/weights'] = weight[:, :, B_last, :][:, :, :AB]
 
                     # B
                     if get_signal(layer_index, 'B'):
-                        in_list = del_offset(AB_last[num_AB_from_a_last_layer:] + B_last, dim_list[layer_index - 1])
-                        weight_dict[layer_name + '/B/weights'] = np.concatenate((weight_variable(
-                            (3, 3, num_AB_from_a_last_layer, num_B)), weight[:, :, in_list, :][:, :, :, B]), axis=2)
+                        weight_dict[layer_name + '/B/weights'] = weight[:, :, AB_last + B_last, :][:, :, :, B]
 
                 elif layer_name.startswith('fc'):
                     # Fc layer
@@ -203,75 +192,41 @@ class VGG_Combined(BaseModel):
                         # From conv to fc, times h*w
                         # !!!!!从conv层到全连接层的时候，原来的512->2048,而且其中的index=i, 投影变成了[4*i, 4i+4]...整体是变成了4倍
                         # 最后一层产生的feature map边长的平方
-                        length = 4
-                        num_A_last_layer *= length
-                        num_B_last_layer *= length
-                        num_AB_from_a_last_layer *= length
-                        num_AB_from_b_last_layer *= length
-
                         A_last = get_expand(A_last)
                         AB_last = get_expand(AB_last)
                         B_last = get_expand(B_last)
 
                     # New weights for neurons from A and AB to A
                     if get_signal(layer_index, 'A'):
-                        in_list = A_last + AB_last[:num_AB_from_a_last_layer]
-                        weight_dict[layer_name + '/A/weights'] = np.concatenate(
-                            (weight[in_list, :][:, A], weight_variable((num_AB_from_b_last_layer, num_A))), axis=0)
+                        weight_dict[layer_name + '/A/weights'] = weight[A_last + AB_last, :][:, A]
 
                     # The output layer does not have AB
                     if get_signal(layer_index, 'AB'):
                         # New weights for neurons from last layer to AB
                         # From A to AB
                         if get_signal(layer_index, 'fromA'):
-                            weight_dict[layer_name + '/AB/A/weights'] = np.concatenate((weight[A_last, :][:,
-                                                                                        AB[:num_AB_from_a]],
-                                                                                        weight_variable(
-                                                                                            (num_A_last_layer,
-                                                                                             num_AB_from_b))),
-                                                                                       axis=-1)
+                            weight_dict[layer_name + '/AB/A/weights'] = weight[A_last, :][:, AB]
 
                         # From AB to AB
                         if get_signal(layer_index, 'fromAB'):
-                            weight_AB_part_a = np.concatenate((weight[AB_last[:num_AB_from_a_last_layer], :][:,
-                                                               AB[:num_AB_from_a]], weight_variable(
-                                (num_AB_from_b_last_layer, num_AB_from_a))), axis=0)
-
-                            offset = dim_list[layer_index - 1]
-                            if layer_name == 'fc6':
-                                # 如果是fc6,conv转化fc的话offset也得变
-                                offset *= 4
-                            weight_AB_part_b = np.concatenate((weight_variable(
-                                (num_AB_from_a_last_layer, num_AB_from_b)),
-                                                               weight[
-                                                               del_offset(AB_last[num_AB_from_a_last_layer:], offset),
-                                                               :][:,
-                                                               AB[num_AB_from_a:]]), axis=0)
-
-                            weight_dict[layer_name + '/AB/AB/weights'] = np.concatenate(
-                                (weight_AB_part_a, weight_AB_part_b), axis=-1)
+                            weight_dict[layer_name + '/AB/AB/weights'] = weight[AB_last, :][:, AB]
 
                         # From B to AB
                         if get_signal(layer_index, 'fromB'):
-                            weight_dict[layer_name + '/AB/B/weights'] = np.concatenate((weight_variable(
-                                (num_B_last_layer, num_AB_from_a)), weight[
-                                                                    del_offset(B_last, dim_list[layer_index - 1]), :][:,
-                                                                    AB[num_AB_from_a:]]), axis=-1)
+                            weight_dict[layer_name + '/AB/B/weights'] = weight[B_last, :][:, AB]
 
                     # New weights for neurons from AB and B to B
                     if get_signal(layer_index, 'B'):
-                        in_list = del_offset(AB_last[num_AB_from_a_last_layer:] + B_last, dim_list[layer_index - 1])
-                        weight_dict[layer_name + '/B/weights'] = np.concatenate(
-                            (weight_variable((num_AB_from_a_last_layer, num_B)), weight[in_list, :][:, B]), axis=0)
+                        weight_dict[layer_name + '/B/weights'] = weight[AB_last + B_last, :][:, B]
 
                 # Biases
                 if get_signal(layer_index, 'A'):
-                    weight_dict[layer_name + '/A/biases'] = bias[cluster_res_list[layer_index]['A']]
+                    weight_dict[layer_name + '/A/biases'] = bias[A]
                 if get_signal(layer_index, 'AB'):
                     if get_signal(layer_index, 'AB'):
-                        weight_dict[layer_name + '/AB/AB/biases'] = bias[cluster_res_list[layer_index]['AB']]
+                        weight_dict[layer_name + '/AB/AB/biases'] = bias[AB]
                 if get_signal(layer_index, 'B'):
-                    weight_dict[layer_name + '/B/biases'] = bias[cluster_res_list[layer_index]['B']]
+                    weight_dict[layer_name + '/B/biases'] = bias[B]
 
         return weight_dict
 
@@ -311,10 +266,10 @@ class VGG_Combined(BaseModel):
                                                                                size=[num_B]).astype(np.float32)
         return weight_dict
 
-    def get_conv(self, x, regu_conv, has_bias=True):
+    def get_conv(self, x, regu_conv):
         return ConvLayer(x, self.weight_dict, is_dropout=False, is_training=self.is_training,
                          is_musked=self.is_musked, regularizer_conv=regu_conv,
-                         is_merge_bn=self.meta_val('is_merge_bn'), has_bias=has_bias)
+                         is_merge_bn=self.meta_val('is_merge_bn'))
 
     def inference(self):
         """
@@ -325,10 +280,10 @@ class VGG_Combined(BaseModel):
         def get_signal(layer_index, key):
             return self.signal_list[layer_index][key]
 
-        def get_conv(x, regu_conv, has_bias=True):
+        def get_conv(x, regu_conv):
             return ConvLayer(x, self.weight_dict, is_dropout=False, is_training=self.is_training,
                              is_musked=self.is_musked, regularizer_conv=regu_conv,
-                             is_merge_bn=self.meta_val('is_merge_bn'), has_bias=has_bias)
+                             is_merge_bn=self.meta_val('is_merge_bn'))
 
         def get_ib(y, layer_type, kl_mult):
             if self.prune_method == 'info_bottle':
@@ -405,32 +360,16 @@ class VGG_Combined(BaseModel):
                     # AB
                     if get_signal(layer_index, 'AB'):
                         with tf.variable_scope(conv_name + '/AB'):
-                            # y_from_A, y_from_AB, y_from_B = 0, 0, 0
-                            # if get_signal(layer_index, 'fromA'):
-                            #     with tf.variable_scope('A'):
-                            #         # From A to AB
-                            #         conv_A = get_conv(y_A_last, self.regularizer_decay, has_bias=False)
-                            #         self.layers.append(conv_A)
-                            #         y_from_A = conv_A.layer_output
 
                             if get_signal(layer_index, 'fromAB'):
                                 with tf.variable_scope('AB'):
                                     # From AB to AB
                                     conv_AB = get_conv(y_AB_last, self.regularizer_conv)
                                     self.layers.append(conv_AB)
-                                    y_from_AB = conv_AB.layer_output
 
-                            # if get_signal(layer_index, 'fromB'):
-                            #     with tf.variable_scope('B'):
-                            #         # From B to AB
-                            #         conv_B = get_conv(y_B_last, self.regularizer_decay, has_bias=False)
-                            #         self.layers.append(conv_B)
-                            #         y_from_B = conv_B.layer_output
+                                y_AB = tf.nn.relu(conv_AB.layer_output)
 
-                            # y_AB = tf.nn.relu(y_from_A + y_from_AB + y_from_B)
-                            y_AB = tf.nn.relu(y_from_AB)
-
-                            y_AB = get_ib(y_AB, 'C_ib', kl_mult)
+                                y_AB = get_ib(y_AB, 'C_ib', kl_mult)
 
                     # B
                     if get_signal(layer_index, 'B'):
@@ -454,7 +393,7 @@ class VGG_Combined(BaseModel):
                         y_A = tf.nn.max_pool(y_A_last, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
                     if get_signal(layer_index, 'AB'):
                         y_AB = tf.nn.max_pool(y_AB_last, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
-                    if get_signal(layer_index, 'A'):
+                    if get_signal(layer_index, 'B'):
                         y_B = tf.nn.max_pool(y_B_last, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
 
                 # Record the output of this layer
@@ -498,34 +437,16 @@ class VGG_Combined(BaseModel):
                 # AB
                 if get_signal(layer_index, 'AB'):
                     with tf.variable_scope(fc_name + '/AB'):
-                        y_from_A, y_from_AB, y_from_B = 0, 0, 0
-                        # if get_signal(layer_index, 'fromA'):
-                        #     with tf.variable_scope('A'):
-                        #         # From A to AB
-                        #         fc_layer_A = FullConnectedLayer(y_A_last, self.weight_dict,
-                        #                                         regularizer_fc=self.regularizer_decay, has_bias=False)
-                        #         self.layers.append(fc_layer_A)
-                        #         y_from_A = fc_layer_A.layer_output
-
                         if get_signal(layer_index, 'fromAB'):
                             with tf.variable_scope('AB'):
                                 # From AB to AB
                                 fc_layer_AB = FullConnectedLayer(y_AB_last, self.weight_dict,
                                                                  regularizer_fc=self.regularizer_fc)
                                 self.layers.append(fc_layer_AB)
-                                y_from_AB = fc_layer_AB.layer_output
 
-                        # if get_signal(layer_index, 'fromB'):
-                        #     with tf.variable_scope('B'):
-                        #         # From B to AB
-                        #         fc_layer_B = FullConnectedLayer(y_B_last, self.weight_dict,
-                        #                                         regularizer_fc=self.regularizer_decay, has_bias=False)
-                        #         self.layers.append(fc_layer_B)
-                        #         y_from_B = fc_layer_B.layer_output
+                            y_AB = tf.nn.relu(fc_layer_AB.layer_output)
 
-                        y_AB = tf.nn.relu(y_from_A + y_from_AB + y_from_B)
-
-                        y_AB = get_ib(y_AB, 'F_ib', self.gamma)
+                            y_AB = get_ib(y_AB, 'F_ib', self.gamma)
 
                 # B
                 if get_signal(layer_index, 'B'):
@@ -539,6 +460,7 @@ class VGG_Combined(BaseModel):
                         elif get_signal(layer_index, 'fromB'):
                             fc_layer = FullConnectedLayer(y_B_last, self.weight_dict,
                                                           regularizer_fc=self.regularizer_fc)
+                        self.layers.append(fc_layer)
                         y_B = tf.nn.relu(fc_layer.layer_output)
 
                         y_B = get_ib(y_B, 'F_ib', self.gamma)
@@ -794,18 +716,19 @@ class VGG_Combined(BaseModel):
             step = self.train_one_epoch(sess, self.train_init, epoch, step, task_name)
             accu, accu_a, accu_b = self.eval_once(sess, self.test_init, epoch)
 
-            if (epoch + 1) % 1 == 0:
-                if self.prune_method == 'info_bottle':
-                    self.get_CR(sess)
+            if self.prune_method == 'info_bottle':
+                cr = self.get_CR(sess)
 
-            if (epoch + 1) % 10 == 0:
+            if (epoch + 1) % 10 == 0 or accu >= 0.9:
                 if self.prune_method == 'info_bottle':
-                    self.get_CR(sess)
-                    save_path = '/local/home/david/Remote/models/model_weights/vgg_ib_' + self.task_name + '_' + str(
-                        self.prune_threshold) + '_' + str(np.around(accu, decimals=6))
+                    save_path = '/local/home/david/Remote/models/model_weights/vgg_combine_ib_' + self.task_name + '_' + str(
+                        self.prune_threshold) + '_' + str(
+                        np.around(accu, decimals=4) + '-' + np.around(accu_a, decimals=4) + '-' + np.around(accu_b,
+                                                                                                            decimals=4) + '_cr-' + str(
+                            np.around(cr, decimals=4)))
                 else:
-                    save_path = '/local/home/david/Remote/models/model_weights/vgg_' + self.task_name + '_' + str(
-                        np.around(accu, decimals=6))
+                    save_path = '/local/home/david/Remote/models/model_weights/vgg_combine_' + self.task_name + '_' + str(
+                        np.around(accu, decimals=4))
                 self.save_weight(sess, save_path)
 
     def test(self, sess):
@@ -876,3 +799,4 @@ class VGG_Combined(BaseModel):
         print('Total parameters: {}, Pruned parameters: {}, Remaining params:{}, Remain/Total params:{}, '
               'Each layer pruned: {}'.format(total_params, pruned_params, remain_params,
                                              float(total_params - pruned_params) / total_params, prune_state))
+        return float(total_params - pruned_params) / total_params

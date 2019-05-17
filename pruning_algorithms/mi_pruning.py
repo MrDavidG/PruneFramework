@@ -15,26 +15,28 @@ import sys
 sys.path.append(r"/local/home/david/Remote/")
 
 from utils.mutual_information import kde_mi, bin_mi, kde_mi_independent, kde_mi_cus
-from models.vgg_mi_new_new import VGG_Combined
+from models.vgg_combine import VGG_Combined
 from models.vgg_celeba import VGGNet
 from utils.config import process_config
+from utils.mi_gpu import kde_gpu, get_K_function
 from datetime import datetime
 
 import tensorflow as tf
 import numpy as np
 import pickle
 import os
-
-from pruning_algorithms.baseline_pruning import get_weight_combine
+import torch
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-
+# gpu 0
 # os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4eec6600-f5e3-f385-9b14-850ae9a2b236'
-# os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4b0856cd-c698-63a2-0b6e-9a33d380f9c4'
+# gpu 1
+os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4b0856cd-c698-63a2-0b6e-9a33d380f9c4'
+
 
 def argmin_mi(layer_output, labelixs, method_mi, binsize, labelprobs=None, labels=None, labels_unique=None,
-              labels_count=None, labels_inverse=None):
+              labels_count=None, labels_inverse=None, entropy_func_upper=None):
     """
     Get the neuron in layer_output who has the minimal mi with label
     :param layer_output:
@@ -59,6 +61,9 @@ def argmin_mi(layer_output, labelixs, method_mi, binsize, labelprobs=None, label
             _, mi_neuron = bin_mi(layer_output_expand, labelixs=labelixs, binsize=binsize)
         elif method_mi == 'kde':
             _, mi_neuron = kde_mi(layer_output_expand, labelixs=labelixs, labelprobs=labelprobs)
+        elif method_mi == 'kde_gpu':
+            _, mi_neuron = kde_gpu(layer_output_expand, labelixs=labelixs, labelprobs=labelprobs,
+                                   entropy_func_upper=entropy_func_upper)
         elif method_mi == 'kde_in':
             mi_neuron = kde_mi_independent(layer_output_expand, labels)
         elif method_mi == 'kde_cus':
@@ -72,7 +77,8 @@ def argmin_mi(layer_output, labelixs, method_mi, binsize, labelprobs=None, label
 
 
 def argmin_marginal_mi(layer_output, F, neuron_list_previous, labelixs, method_mi, binsize, labelprobs=None,
-                       labels=None, labels_unique=None, labels_count=None, labels_inverse=None):
+                       labels=None, labels_unique=None, labels_count=None, labels_inverse=None,
+                       entropy_func_upper=None):
     """
     Get the neuron in F who has the minimal marginal MI w.r.t neuron_list_previous
     :param layer_output:
@@ -82,6 +88,11 @@ def argmin_marginal_mi(layer_output, F, neuron_list_previous, labelixs, method_m
     :param method_mi:
     :param binsize:
     :param labelprobs:
+    :param labels:
+    :param labels_unique:
+    :param labels_count:
+    :param labels_inverse:
+    :param entropy_func_upper:
     :return:
     """
     mi_min = 0
@@ -92,15 +103,23 @@ def argmin_marginal_mi(layer_output, F, neuron_list_previous, labelixs, method_m
         shape_neurons_output = layer_output[..., neuron_list].shape
         if len(shape_neurons_output) == 4:
             layer_output_expand = np.reshape(layer_output[..., neuron_list], newshape=(shape_neurons_output[0], -1))
+        elif len(shape_neurons_output) == 2:
+            layer_output_expand = layer_output[..., neuron_list]
 
-        # Sort or not?
         if method_mi == 'bin':
+            # 直方图画格子的方法
             _, mi_neuron = bin_mi(layer_output_expand, labelixs=labelixs, binsize=binsize)
         elif method_mi == 'kde':
+            # 2^20个unique label的方法
             _, mi_neuron = kde_mi(layer_output_expand, labelixs=labelixs, labelprobs=labelprobs)
+        elif method_mi == 'kde_gpu':
+            _, mi_neuron = kde_gpu(layer_output_expand, labelixs=labelixs, labelprobs=labelprobs,
+                                   entropy_func_upper=entropy_func_upper)
         elif method_mi == 'kde_in':
+            # 当成20个彼此之间独立的label
             mi_neuron = kde_mi_independent(layer_output_expand, labels)
         elif method_mi == 'kde_cus':
+            # 自己实现的kde方法，主要针对2^20unique label的场景
             _, mi_neuron = kde_mi_cus(layer_output_expand, labels_unique, labels_count, labels_inverse)
 
         if mi_neuron < mi_min or min_index_neuron == -1:
@@ -110,7 +129,7 @@ def argmin_marginal_mi(layer_output, F, neuron_list_previous, labelixs, method_m
     return min_index_neuron, mi_min
 
 
-def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu_decay, ib_threshold, o_a, o_b):
+def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu_decay, ib_threshold):
     """
     Rebuild the combined model and train.
     :param weight_a: weight dictionary of model a
@@ -142,51 +161,23 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     model = VGG_Combined(config, task_name, weight_a, weight_b, cluster_res_list, signal_list, musk=False, gamma=gamma,
                          ib_threshold=ib_threshold)
     model.set_global_tensor(training, regularizer_zero, regularizer_decay, regularizer_zero)
-    # model.build()
-    model.inference()
-    # 以下为Test
+    model.build()
+
     # Train
-    # session.run(tf.global_variables_initializer())
-    # # TODO: test
-
-    # # TODO: test
-    # with tf.variable_scope('task/conv1_2/AB/AB'):
-    #     out = model.get_conv(tf.nn.relu(model.layers[0].layer_output), model.regularizer_conv).layer_output
-
     session.run(tf.global_variables_initializer())
     session.run(model.test_init)
 
-    # res_1, res_2, res_4= session.run([out, model.layers[1].layer_output, tf.nn.conv2d(o_a[0], weight_a['conv1_2/weights'], strides=[1, 1, 1, 1], padding='SAME')+weight_dict_a['conv1_2/biases']])
-    # res_1, res_2, res_4= session.run([out, model.layers[1].layer_output, tf.nn.conv2d(model.layers[1].layer_input[:,:,:,:64], weight_a['conv1_2/weights'], strides=[1, 1, 1, 1], padding='SAME')+weight_dict_a['conv1_2/biases']])
-    # res_3 = o_a[1]
-
-    # session.run(model.test_init)
-
-    # session.run(tf.nn.conv2d(model.layers[0].layer_output, model.weight_dict['conv1_2/AB/AB/weights'], [1,1,1,1], padding='SAME')+model.weight_dict['conv1_2/AB/biases'])
-
     # Graph
-    # summary_writer = tf.summary.FileWriter('/local/home/david/log/', session.graph)
+    summary_writer = tf.summary.FileWriter('/local/home/david/log/', session.graph)
 
-    # model.eval_once(session, model.test_init, -1)
+    model.eval_once(session, model.test_init, -1)
 
-
-
-    # layers_name = [layer.layer_name for layer in model.layers]
-    # layers_output, x, inputs = session.run([[layer.layer_output for layer in model.layers]] + [model.X]+ [[model.layers[0].layer_input, model.layers[1].layer_input, model.layers[1].layer_output
-    #                                                                                                        ]],
-    #                                feed_dict={model.is_training: False})
-    # #
-    print('Stop here')
-
-    # model.train(sess=session, n_epochs=10, task_name='AB', lr=0.1)
-    # model.train(sess=session, n_epochs=10, task_name='B', lr=0.1)
-    # model.train(sess=session, n_epochs=100, task_name='A', lr=0.01)
-    # model.train(sess=session, n_epochs=80, task_name='A', lr=0.001)
-    # model.train(sess=session, n_epochs=80, task_name='A', lr=0.0001)
+    model.train(sess=session, n_epochs=20, task_name='A', lr=0.01)
+    model.train(sess=session, n_epochs=80, task_name='A', lr=0.001)
+    model.train(sess=session, n_epochs=80, task_name='A', lr=0.0001)
 
 
-def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_threshold, method_mi, dim_list, N_total=1,
-                   binsize=0.5):
+def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_threshold, method_mi, dim_list, binsize):
     """
     Get the clusters of all layers (except output layer).
     :param y_a: labels of model a
@@ -205,7 +196,8 @@ def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_thr
     num_label_b = y_b.shape[1]
 
     # 获得Y_A和Y_B统计信息
-    if method_mi in ['kde', 'bin', 'kde_cus']:
+    # 'kde_in'的方法不需要
+    if method_mi in ['kde', 'kde_gpu', 'kde_cus', 'bin']:
         # For Y_A
         uniqueids_a = np.ascontiguousarray(y_a).view(np.dtype((np.void, y_a.dtype.itemsize * y_a.shape[1])))
         unique_value_a, unique_inverse_a, unique_counts_a = np.unique(uniqueids_a, return_index=False,
@@ -227,6 +219,11 @@ def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_thr
         labelixs_b = {}
         for label_index, label_value in enumerate(unique_value_b):
             labelixs_b[label_index] = unique_inverse_b == label_index
+
+        # For gpu
+        entropy_func_upper = None
+        if method_mi == 'kde_gpu':
+            entropy_func_upper = get_K_function()
 
     # Record list of clusters for all layers
     cluster_res_list = list()
@@ -280,7 +277,7 @@ def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_thr
 
         # Init with the neuron of F_A that has the  minimal MI with Y_B
         min_index_neuron, mi_min = argmin_mi(layer_output_all[..., F_A], labelixs_b, method_mi, binsize, labelprobs_b,
-                                             y_b, unique_value_b, unique_counts_b, unique_inverse_b)
+                                             y_b, unique_value_b, unique_counts_b, unique_inverse_b, entropy_func_upper)
         print('[%s] MI with Y_B: Min_index_neuron=%d,  mi_min=%f' % (datetime.now(), min_index_neuron, mi_min))
 
         # Lines 3-4
@@ -290,15 +287,16 @@ def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_thr
         while mi_min <= alpha_threshold:
             # Traverse neurons in F_A and find the neuron with the minimal mi with Y_B
             min_index_neuron, mi_min = argmin_marginal_mi(layer_output_all, F_A, cluster_res_list[layer_index]['A'],
-                                                          labelixs_b, method_mi, binsize, labelprobs_b,
-                                                          y_b, unique_value_b, unique_counts_b, unique_inverse_b)
+                                                          labelixs_b, method_mi, binsize, labelprobs_b, y_b,
+                                                          unique_value_b, unique_counts_b, unique_inverse_b,
+                                                          entropy_func_upper)
             print('[%s] MI with Y_B: Min_index_neuron=%d,  mi_min=%f' % (datetime.now(), min_index_neuron, mi_min))
             # Lines 7-8
             F_A.remove(min_index_neuron)
             cluster_res_list[layer_index]['A'].append(min_index_neuron)
 
         min_index_neuron, mi_min = argmin_mi(layer_output_all[..., F_B], labelixs_a, method_mi, binsize, labelprobs_a,
-                                             y_a, unique_value_a, unique_counts_a, unique_inverse_a)
+                                             y_a, unique_value_a, unique_counts_a, unique_inverse_a, entropy_func_upper)
         print('[%s] MI with Y_A: Min_index_neuron=%d,  mi_min=%f' % (datetime.now(), min_index_neuron, mi_min))
 
         # Line 11
@@ -314,8 +312,9 @@ def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_thr
         while mi_min <= alpha_threshold:
             # Traverse neurons in F_B to find the neuron with the minimal mi with Y_A
             min_index_neuron, mi_min = argmin_marginal_mi(layer_output_all, F_B, cluster_res_list[layer_index]['B'],
-                                                          labelixs_a, method_mi, binsize, labelprobs_a,
-                                                          y_a, unique_value_a, unique_counts_a, unique_inverse_a)
+                                                          labelixs_a, method_mi, binsize, labelprobs_a, y_a,
+                                                          unique_value_a, unique_counts_a, unique_inverse_a,
+                                                          entropy_func_upper)
             print('[%s] MI with Y_A: Min_index_neuron=%d,  mi_min=%f' % (datetime.now(), min_index_neuron, mi_min))
 
             if min_index_neuron in cluster_res_list[layer_index]['A']:
@@ -369,13 +368,12 @@ def get_layers_output(task_name, model_path, with_relu=True):
 
     # layers_output_tf = [layer.layer_output for layer in model.layers[:-1]]
     layers_output_tf = [layer.layer_output for layer in model.layers]
-    layers_output, labels, inputs = sess.run([layers_output_tf] + [model.Y] + [[layer.layer_input for layer in model.layers]],
-                                            feed_dict={model.is_training: False})
+    layers_output, labels = sess.run([layers_output_tf] + [model.Y], feed_dict={model.is_training: False})
 
     if with_relu:
         layers_output = [x * (x > 0) for x in layers_output]
 
-    return model.weight_dict, layers_output, labels, inputs
+    return model.weight_dict, layers_output, labels
 
 
 def get_connection_signal(cluster_res_list, dim_list):
@@ -449,7 +447,20 @@ def get_connection_signal(cluster_res_list, dim_list):
     return signal_list
 
 
-if __name__ == '__main__':
+def pruning(model_path_1, model_path_2, alpha_threshold, method_mi, binsize, gamma=10, ib_threshold=0.01, regu_decay=0):
+    """
+
+    :param model_path_1:
+    :param model_path_2:
+    :param alpha_threshold: For MI pruning
+    :param method_mi: 'kde' for unique 2^20 labels, 'kde_in' for unique 20 labels, 'kde_cus' for self compute 2^20 labels,
+    'bin' is histogram method for 2^20 labels
+    :param binsize:
+    :param gamma: VIB factor for fc layer
+    :param ib_threshold: pruning threshold for VIB method
+    :param regu_decay: adopted for now
+    :return:
+    """
     dim_list = [64, 64,
                 128, 128,
                 256, 256, 256,
@@ -458,39 +469,38 @@ if __name__ == '__main__':
                 4096, 4096, 20]
 
     print('[%s] Obtain model weights, layers output and labels' % (datetime.now()))
-    weight_dict_a, layers_output_list_a, y_a, input_a = get_layers_output('celeba1',
-                                                                          model_path='/local/home/david/Remote/models/model_weights/vgg_celeba1_fix_conv_0.889316',
-                                                                          with_relu=False)
-    weight_dict_b, layers_output_list_b, y_b, input_b = get_layers_output('celeba2',
-                                                                          model_path='/local/home/david/Remote/models/model_weights/vgg_celeba2_fix_conv_0.873415',
-                                                                          with_relu=False)
+    weight_dict_a, layers_output_list_a, y_a, = get_layers_output('celeba1', model_path=model_path_1)
+    weight_dict_b, layers_output_list_b, y_b, = get_layers_output('celeba2', model_path=model_path_2)
 
-    # print('[%s] Divide neurons in each layer into clusters A, B and AB' % (datetime.now()))
-    # cluster_res_list = combine_models(y_a, y_b, layers_output_list_a, layers_output_list_b, alpha_threshold=1,
-    #                                   method_mi='kde', dim_list=dim_list, binsize=5)
+    print('[%s] Divide neurons in each layer into clusters A, B and AB' % (datetime.now()))
+    cluster_res_list = combine_models(y_a, y_b, layers_output_list_a, layers_output_list_b,
+                                      alpha_threshold=alpha_threshold, method_mi=method_mi, dim_list=dim_list,
+                                      binsize=binsize)
+
+    pickle.dump(open('/local/home/david/Remote/models/model_weights/cluster_res_list', 'wb'))
 
     # TODO: 以下为test
-    cluster_res_list = list()
-
-    for layer_index in range(15):
-        # Total number of neurons
-        num_neuron_total = dim_list[layer_index] * 2
-
-        # Store clusters for each layer
-        cluster_layer_dict = dict()
-
-        # Init T^A, T^B and T^AB to store clusters for each layer
-        cluster_layer_dict['A'] = list()
-        cluster_layer_dict['B'] = list()
-        cluster_layer_dict['AB'] = [x for x in range(dim_list[layer_index] * 2)]
-        cluster_res_list += [cluster_layer_dict]
-    # Output layer
-    cluster_layer_dict = dict()
-    cluster_layer_dict['A'] = [x for x in range(20)]
-    cluster_layer_dict['B'] = [x + 20 for x in range(20)]
-    cluster_layer_dict['AB'] = list()
-    cluster_res_list += [cluster_layer_dict]
-    # end Test
+    # cluster_res_list = list()
+    #
+    # for layer_index in range(15):
+    #     # Total number of neurons
+    #     num_neuron_total = dim_list[layer_index] * 2
+    #
+    #     # Store clusters for each layer
+    #     cluster_layer_dict = dict()
+    #
+    #     # Init T^A, T^B and T^AB to store clusters for each layer
+    #     cluster_layer_dict['A'] = list()
+    #     cluster_layer_dict['B'] = list()
+    #     cluster_layer_dict['AB'] = [x for x in range(dim_list[layer_index] * 2)]
+    #     cluster_res_list += [cluster_layer_dict]
+    # # Output layer
+    # cluster_layer_dict = dict()
+    # cluster_layer_dict['A'] = [x for x in range(20)]
+    # cluster_layer_dict['B'] = [x + 20 for x in range(20)]
+    # cluster_layer_dict['AB'] = list()
+    # cluster_res_list += [cluster_layer_dict]
+    # # end Test
 
     print('[%s] Model Summary:')
     for layer_index, layer_clusters in enumerate(cluster_res_list):
@@ -508,5 +518,17 @@ if __name__ == '__main__':
     signal_list = get_connection_signal(cluster_res_list, dim_list)
 
     print('[%s] Rebuild and train the combined model' % (datetime.now()))
-    rebuild_model(weight_dict_a, weight_dict_b, cluster_res_list, signal_list, gamma=20, regu_decay=0, ib_threshold=0.5,
-                  o_a=layers_output_list_a, o_b=layers_output_list_b)
+    rebuild_model(weight_dict_a, weight_dict_b, cluster_res_list, signal_list, gamma=gamma, regu_decay=regu_decay,
+                  ib_threshold=ib_threshold)
+
+
+if __name__ == '__main__':
+    path = '/local/home/david/Remote/models/model_weights/'
+
+    pruning(model_path_1=path + 'vgg_celeba1_0.908977_best',
+            model_path_2=path + 'vgg_celeba2_0.893588_best',
+            alpha_threshold=5,
+            method_mi='kde_gpu',
+            binsize=0.5,
+            gamma=10,
+            ib_threshold=0.01)

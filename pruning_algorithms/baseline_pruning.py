@@ -145,13 +145,13 @@ def baseline1(model_path_1, model_path_2, type_init):
         session.run(tf.global_variables_initializer())
 
         # model.eval_once(session, model.test_init, -1)
-        model.get_CR(session)
+
         model.train(sess=session, n_epochs=10, lr=0.1)
-        model.get_CR(session)
+
         model.train(sess=session, n_epochs=10, lr=0.01)
-        model.get_CR(session)
+
         model.train(sess=session, n_epochs=10, lr=0.001)
-        model.get_CR(session)
+
 
 
 if __name__ == '__main__':

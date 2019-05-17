@@ -12,6 +12,8 @@ Description.
 """
 
 import numpy as np
+import keras.backend as K
+
 from scipy.special import logsumexp
 
 
@@ -119,6 +121,7 @@ def kde_mi(hidden, labelixs, labelprobs):
 
     # return MI_XM_upper, MI_YM_upper
     return 0, MI_YM_upper
+
 
 
 def kde_mi_independent(hidden, labels):

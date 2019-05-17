@@ -135,9 +135,9 @@ class InformationBottleneckLayer(BaseLayer):
         return KLD * 0.5 * self.kl_mult
 
     def get_ib_param(self, weight_dict):
-        mu = tf.get_variable(name='mu', initializer=weight_dict[self.layer_name + '/info_bottle/mu'],
+        mu = tf.get_variable(name='info_bottle/mu', initializer=weight_dict[self.layer_name + '/info_bottle/mu'],
                              trainable=True)
-        logD = tf.get_variable(name='logD', initializer=weight_dict[self.layer_name + '/info_bottle/logD'],
+        logD = tf.get_variable(name='info_bottle/logD', initializer=weight_dict[self.layer_name + '/info_bottle/logD'],
                                trainable=True)
 
         return mu, logD

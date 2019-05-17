@@ -28,7 +28,6 @@ import time
 import os
 import tensorflow as tf
 
-
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
@@ -127,7 +126,7 @@ class VGGNet(BaseModel):
                               ('conv2_1', 1.0 / 16), ('conv2_2', 1.0 / 16), 'pooling',
                               ('conv3_1', 1.0 / 8), ('conv3_2', 1.0 / 8), ('conv3_3', 1.0 / 8), 'pooling',
                               ('conv4_1', 1.0 / 4), ('conv4_2', 1.0 / 4), ('conv4_3', 1.0 / 4), 'pooling',
-                              ('conv5_1', 1.0 / 2), ('conv5_2', 1.0 / 2), ('conv5_3', 1.0 / 2), 'pooling']:
+                              ('conv5_1', 1.0 / 1), ('conv5_2', 1.0 / 1), ('conv5_3', 1.0 / 1), 'pooling']:
                 if set_layer != 'pooling':
                     conv_name, kl_mult = set_layer
                     with tf.variable_scope(conv_name):
@@ -317,15 +316,14 @@ class VGGNet(BaseModel):
             step = self.train_one_epoch(sess, self.train_init, epoch, step)
             accu = self.eval_once(sess, self.test_init, epoch)
 
-            if (epoch + 1) % 1 == 0:
-                if self.prune_method == 'info_bottle':
-                    self.get_CR(sess)
+            if self.prune_method == 'info_bottle':
+                cr = self.get_CR(sess)
 
-            if (epoch + 1) % 10 == 0:
+            if (epoch + 1) % 10 == 0 or accu >= 0.89:
                 if self.prune_method == 'info_bottle':
-                    self.get_CR(sess)
                     save_path = '/local/home/david/Remote/models/model_weights/vgg_ib_' + self.task_name + '_' + str(
-                        self.prune_threshold) + '_' + str(np.around(accu, decimals=6))
+                        self.prune_threshold) + '_' + str(
+                        np.around(accu, decimals=6)) + '_cr-' + str(np.around(cr, decimals=5))
                 else:
                     save_path = '/local/home/david/Remote/models/model_weights/vgg_' + self.task_name + '_' + str(
                         np.around(accu, decimals=6))
@@ -399,16 +397,18 @@ class VGGNet(BaseModel):
         print('Total parameters: {}, Pruned parameters: {}, Remaining params:{}, Remain/Total params:{}, '
               'Each layer pruned: {}'.format(total_params, pruned_params, remain_params,
                                              float(total_params - pruned_params) / total_params, prune_state))
+        return float(total_params - pruned_params) / total_params
 
 
 if __name__ == '__main__':
-    config = process_config("../configs/vgg_net.json")
+    config = process_config("../configs/ib_vgg.json")
+    # config = process_config("../configs/vgg_net.json")
 
     # apply video memory dynamically
     gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True
 
-    for task_name in ['celeba1']:
+    for task_name in ['celeba2']:
         print('Training on task {:s}'.format(task_name))
         tf.reset_default_graph()
         # session for training
@@ -417,21 +417,57 @@ if __name__ == '__main__':
 
         training = tf.placeholder(dtype=tf.bool, name='training')
 
-        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.001)
-        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.001)
+        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.0)
+        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.0)
 
         # Train
-        model = VGGNet(config, task_name, musk=False, gamma=10)
+        model = VGGNet(config, task_name, musk=False, gamma=15)
         model.set_global_tensor(training, regularizer_conv, regularizer_fc)
         model.build()
 
         session.run(tf.global_variables_initializer())
         model.eval_once(session, model.test_init, -1)
 
-        model.train(sess=session, n_epochs=10, lr=0.1)
+        model.train(sess=session, n_epochs=30, lr=0.01)
 
-        model.train(sess=session, n_epochs=20, lr=0.01)
+        model.train(sess=session, n_epochs=30, lr=0.001)
 
-        model.train(sess=session, n_epochs=20, lr=0.001)
+        model.train(sess=session, n_epochs=40, lr=0.0001)
 
-        model.train(sess=session, n_epochs=20, lr=0.0001)
+
+def exp_celeba(task_name_list, model_path=0, regularizer=0, is_vib=False, gamma=None, ib_threshold=None,
+               kl_factor=None):
+    if is_vib:
+        config = process_config("../configs/ib_vgg.json")
+    else:
+        config = process_config("../configs/vgg_net.json")
+
+    # apply video memory dynamically
+    gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
+    gpu_config.gpu_options.allow_growth = True
+
+    for task_name in task_name_list:
+        print('Training on task {:s}'.format(task_name))
+        tf.reset_default_graph()
+        # session for training
+
+        session = tf.Session(config=gpu_config)
+
+        training = tf.placeholder(dtype=tf.bool, name='training')
+
+        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=regularizer)
+        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=regularizer)
+
+        # Train
+        model = VGGNet(config, task_name, musk=False, gamma=gamma, model_path=model_path)
+        model.set_global_tensor(training, regularizer_conv, regularizer_fc)
+        model.build()
+
+        session.run(tf.global_variables_initializer())
+        model.eval_once(session, model.test_init, -1)
+
+        model.train(sess=session, n_epochs=30, lr=0.01)
+
+        model.train(sess=session, n_epochs=30, lr=0.001)
+
+        model.train(sess=session, n_epochs=40, lr=0.0001)

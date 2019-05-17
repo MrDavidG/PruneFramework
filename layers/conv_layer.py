@@ -23,12 +23,13 @@ class ConvLayer(BaseLayer):
         if is_merge_bn:
             self.layer_type = 'C'
             # with biases
-            self.create_merge(x, weight_dict, is_dropout, is_training, is_musked, regularizer_conv, stride)
+            self.create_merge(x, weight_dict, is_dropout, is_training, is_musked=is_musked,
+                              regularizer_conv=regularizer_conv, stride=stride)
         else:
             # Without biases, but with params of batch normalization
             self.layer_type = 'R'
             self.create(x, weight_dict, is_dropout, is_training, is_musked, regularizer_conv, stride)
-    
+
     def create(self, x, weight_dict=None, is_dropout=False, is_training=False, is_musked=False, regularizer_conv=None,
                stride=1):
         self.layer_input = x
@@ -54,7 +55,7 @@ class ConvLayer(BaseLayer):
         self.layer_output = bn
 
     def create_merge(self, x, weight_dict=None, is_dropout=False, is_training=False, is_musked=False,
-                     regularizer_conv=None, trainable=True, stride=1):
+                     regularizer_conv=None, stride=1, trainable=True):
         """
         create a conv layer with biases and without bn
         :param x:
