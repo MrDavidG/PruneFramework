@@ -528,7 +528,7 @@ if __name__ == '__main__':
     pruning(model_path_1=path + 'vgg_celeba1_0.908977_best',
             model_path_2=path + 'vgg_celeba2_0.893588_best',
             alpha_threshold=5,
-            method_mi='kde_gpu',
+            method_mi='kde',
             binsize=0.5,
             gamma=10,
             ib_threshold=0.01)
