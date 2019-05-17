@@ -846,111 +846,22 @@ class VGG_Combined(BaseModel):
             remain_params += n_remain
             pruned_params += n_params - n_remain
 
-        # Obtain all masks
-        masks = list()
-        layers_type = list()
-        out_channel_list = list()
-        in_channel_list = list()
-        layers_name_list = list()
-        for layer in self.layers:
-            if layer.layer_type == 'C_ib' or layer.layer_type == 'F_ib':
-                layer_name = layer.layer_name
-                # 记录这一层的入度和出度
-                in_channel_list += [num_in_channel_dict[layer_name]]
-                out_channel_list += [num_out_channel_dict[layer_name]]
+        # output layer
+        n_params = num_in_channel_dict['fc8/A'] * 20
+        n_remain = (num_in_channel_dict['fc8/A'] - num_in_prune) * 20
+        total_params += n_params
+        remain_params += n_remain
 
-                # 和musks是一一对应的关系
-                layers_name_list += [layer_name]
+        n_params = num_in_channel_dict['fc8/B'] * 20
+        n_remain = (num_in_channel_dict['fc8/B'] - num_in_prune) * 20
+        total_params += n_params
+        remain_params += n_remain
 
-                layers_type += [layer.layer_type]
-                masks += [layer.get_mask(threshold=self.prune_threshold)]
+        print('Total parameters: {}, Pruned parameters: {}, Remaining params:{}, Remain/Total params:{}'.format(
+            total_params, pruned_params, remain_params, np.around(float(total_params - pruned_params) / total_params, decimals=5)))
 
-        # 获得具体的mask
-        masks = sess.run(masks)
-
-        # how many channels/dims are prune in each layer
-        prune_state = [np.sum(mask == 0) for mask in masks]
-
-        # 记录一下每一层的入度被剪枝了多少
-        prune_state_dict = dict()
-        for i, layer_name in enumerate(layers_name_list):
-            # 这一层被剪枝了多少
-            prune_state_dict[layer_name] = prune_state[i]
-
-        total_params, pruned_params, remain_params = 0, 0, 0
-
-        for index, mask in masks:
-            num_out = out_channel_list[index]
-            num_in = in_channel_list[index]
-
-            if layers_type[index] == 'C_ib':
-                n_params = num_in * num_out * 9
-                n_remain = num_in * (num_out - prune_state[index]) * 9
-
-            elif layers_type[index] == 'F_ib':
-                n_params = num_in * num_out
-                n_remain = num_in * (num_out - prune_state[index])
-
-            total_params += n_params
-            remain_params += n_remain
-            pruned_params += n_params - n_remain
-
-        # two output layer
-        n_params_a = num_in_channel_dict['fc8/A'] * num_out_channel_dict['fc8/A']
-        n_params_b = num_in_channel_dict['fc8/B'] * num_out_channel_dict['fc8/B']
-        total_params += (n_params_a + n_params_b)
-
-    def get_CR(self, sess):
-
-        # Obtain all masks
-        masks = list()
-        for layer in self.layers:
-            if layer.layer_type == 'C_ib' or layer.layer_type == 'F_ib':
-                layer.layer_name
-                masks += [layer.get_mask(threshold=self.prune_threshold)]
-
-        masks = sess.run(masks)
-        n_classes = self.Y.shape.as_list()[1]
-
-        # how many channels/dims are prune in each layer
-        prune_state = [np.sum(mask == 0) for mask in masks]
-
-        total_params, pruned_params, remain_params = 0, 0, 0
-        # for conv layers
-        in_channels, in_pruned = 3, 0
-        for n, n_out in enumerate([64, 64,
-                                   128, 128,
-                                   256, 256, 256,
-                                   512, 512, 512,
-                                   512, 512, 512]):
-            # params between this and last layers
-            n_params = in_channels * n_out * 9
-            total_params += n_params
-            n_remain = (in_channels - in_pruned) * (n_out - prune_state[n]) * 9
-            remain_params += n_remain
-            pruned_params += n_params - n_remain
-            # for next layer
-            in_channels = n_out
-            in_pruned = prune_state[n]
-        # for fc layers
-        offset = len(prune_state) - 2
-        for n, n_out in enumerate([4096, 4096]):
-            n_params = in_channels * n_out
-            total_params += n_params
-            n_remain = (in_channels - in_pruned) * (n_out - prune_state[n + offset])
-            remain_params += n_remain
-            pruned_params += n_params - n_remain
-            # for next layer
-            in_channels = n_out
-            in_pruned = prune_state[n + offset]
-        total_params += in_channels * n_classes
-        remain_params += (in_channels - in_pruned) * n_classes
-        pruned_params += in_pruned * n_classes
-
-        print('Total parameters: {}, Pruned parameters: {}, Remaining params:{}, Remain/Total params:{}, '
-              'Each layer pruned: {}'.format(total_params, pruned_params, remain_params,
-                                             float(total_params - pruned_params) / total_params, prune_state))
-        return float(total_params - pruned_params) / total_params
+        print('Each layer pruned: {}'.format(prune_state))
+        return np.around(float(total_params - pruned_params) / total_params, decimals=5)
 
     def get_flops(sess, model):
         # Obtain all masks

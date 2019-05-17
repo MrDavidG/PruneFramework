@@ -428,9 +428,9 @@ if __name__ == '__main__':
         session.run(tf.global_variables_initializer())
         model.eval_once(session, model.test_init, -1)
 
-        model.train(sess=session, n_epochs=30, lr=0.01)
+        model.train(sess=session, n_epochs=50, lr=0.01)
 
-        model.train(sess=session, n_epochs=30, lr=0.001)
+        model.train(sess=session, n_epochs=80, lr=0.001)
 
         model.train(sess=session, n_epochs=40, lr=0.0001)
 

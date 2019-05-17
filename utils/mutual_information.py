@@ -123,7 +123,6 @@ def kde_mi(hidden, labelixs, labelprobs):
     return 0, MI_YM_upper
 
 
-
 def kde_mi_independent(hidden, labels):
     """
 
@@ -194,6 +193,30 @@ def kde_mi_unique(hidden, labels):
     return MI_YM_upper
 
 
+# def bin_mi(hidden, labelixs, binsize=0.5):
+#     """
+#
+#     :param hidden:
+#     :param labelixs: 每一个label在哪些instance中出现过，即[batch_size, 1]
+#     :param binsize:
+#     :return:
+#     """
+#
+#     def get_h(d):
+#         digitized = np.floor(d / binsize).astype('int')
+#         # 得到的是[unique]
+#         p_ts = get_unique_probs(digitized)
+#         return -np.sum(p_ts * np.log(p_ts))
+#
+#     H_LAYER = get_h(hidden)
+#     H_LAYER_GIVEN_OUTPUT = 0
+#
+#     for label, ixs in labelixs.items():
+#         H_LAYER_GIVEN_OUTPUT += ixs.mean() * get_h(hidden[ixs, :])
+#
+#     # return 1.0 / np.log(2) * H_LAYER, 1.0 / np.log(2) * H_LAYER - H_LAYER_GIVEN_OUTPUT
+#     return 0, 1.0 / np.log(2) * H_LAYER - H_LAYER_GIVEN_OUTPUT
+
 def bin_mi(hidden, labelixs, binsize=0.5):
     """
 
@@ -204,16 +227,19 @@ def bin_mi(hidden, labelixs, binsize=0.5):
     """
 
     def get_h(d):
-        digitized = np.floor(d / binsize).astype('int')
+        digitized = np.sign(d).astype('int')
         # 得到的是[unique]
         p_ts = get_unique_probs(digitized)
         return -np.sum(p_ts * np.log(p_ts))
 
     H_LAYER = get_h(hidden)
-    H_LAYER_GIVEN_OUTPUT = 0
 
-    for label, ixs in labelixs.items():
-        H_LAYER_GIVEN_OUTPUT += ixs.mean() * get_h(hidden[ixs, :])
+    sum = 0.
+    for j in range(len(labelixs)):
+        H_LAYER_GIVEN_OUTPUT = 0
+        for label, ixs in labelixs[j].items():
 
-    # return 1.0 / np.log(2) * H_LAYER, 1.0 / np.log(2) * H_LAYER - H_LAYER_GIVEN_OUTPUT
-    return 0, 1.0 / np.log(2) * H_LAYER - H_LAYER_GIVEN_OUTPUT
+            H_LAYER_GIVEN_OUTPUT += ixs.mean() * get_h(hidden[ixs, :])
+        sum += H_LAYER_GIVEN_OUTPUT
+
+    return 0, 1.0 / np.log(2) * H_LAYER * 20 - sum

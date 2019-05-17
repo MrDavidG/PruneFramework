@@ -63,9 +63,24 @@ def kde_gpu(hidden, labelixs, labelprobs, entropy_func_upper):
     return 0, MI_YM_upper
 
 
+def kde_gpu_without_hupper(h_upper, hidden, labelixs, labelprobs, entropy_func_upper):
+    hM_given_Y_upper = 0.
+    for j in range(len(labelixs)):
+        if labelixs[j].max():
+            hcond_upper = entropy_func_upper([hidden[labelixs[j], :], ])[0]
+        else:
+            hcond_upper = 0
+        hM_given_Y_upper += labelprobs[j] * hcond_upper
+
+    MI_YM_upper = h_upper - hM_given_Y_upper
+
+    return 0, MI_YM_upper
+
+
 def kde_in_gpu(hidden, labelixs, labelprobs, entropy_func_upper):
+    h_upper = entropy_func_upper([hidden, ])[0]
     sum = 0
     for j in range(len(labelixs)):
-        _, mi = kde_gpu(hidden, labelixs[j], labelprobs[j], entropy_func_upper)
+        _, mi = kde_gpu_without_hupper(h_upper, hidden, labelixs[j], labelprobs[j], entropy_func_upper)
         sum += mi
     return 0, sum

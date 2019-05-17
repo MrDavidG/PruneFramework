@@ -21,6 +21,8 @@ from utils.config import process_config
 from utils.mi_gpu import kde_gpu, get_K_function, kde_in_gpu
 from datetime import datetime
 
+
+import matplotlib.pyplot as plt
 import tensorflow as tf
 import numpy as np
 import pickle
@@ -48,6 +50,10 @@ def argmin_mi(layer_output, labelixs, method_mi, binsize, labelprobs=None, label
     """
     mi_min = 0
     min_index_neuron = -1
+
+    # Test:
+    mis = list()
+
     for index_neuron in range(layer_output.shape[-1]):
         shape_neuron_output = layer_output[..., index_neuron].shape
         if len(shape_neuron_output) == 1:
@@ -70,9 +76,16 @@ def argmin_mi(layer_output, labelixs, method_mi, binsize, labelprobs=None, label
         elif method_mi == 'kde_cus':
             _, mi_neuron = kde_mi_cus(layer_output_expand, labels_unique, labels_count, labels_inverse)
 
+
+        mis += [mi_neuron]
+
         if mi_neuron < mi_min or min_index_neuron == -1:
             mi_min = mi_neuron
             min_index_neuron = index_neuron
+
+    plt.scatter(layer_output.shape[-1], mis)
+    plt.show()
+
 
     return min_index_neuron, mi_min
 
@@ -511,6 +524,7 @@ def pruning(model_path_1, model_path_2, alpha_threshold, method_mi, binsize, gam
                                       alpha_threshold=alpha_threshold, method_mi=method_mi, dim_list=dim_list,
                                       binsize=binsize)
 
+    print('[%s] Save cluster results' % (datetime.now()))
     pickle.dump(open('/local/home/david/Remote/models/model_weights/cluster_res_list_alpha-'+str(alpha_threshold), 'wb'))
 
     # TODO: 以下为test
@@ -561,8 +575,8 @@ if __name__ == '__main__':
 
     pruning(model_path_1=path + 'vgg_celeba1_0.908977_best',
             model_path_2=path + 'vgg_celeba2_0.893588_best',
-            alpha_threshold=5.5,
-            method_mi='kde_in',
+            alpha_threshold=0.001,
+            method_mi='bin',
             binsize=0.5,
             gamma=10,
             ib_threshold=0.01)
