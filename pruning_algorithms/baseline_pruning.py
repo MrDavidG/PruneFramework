@@ -14,7 +14,7 @@ import sys
 
 sys.path.append(r"/local/home/david/Remote/")
 
-from models.vgg_combine import VGG_Combined
+from models.vgg_full_connect import VGG_Combined
 from utils.config import process_config
 from datetime import datetime
 
@@ -52,7 +52,7 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     # Set training params
     training = tf.placeholder(dtype=tf.bool, name='training')
     regularizer_zero = tf.contrib.layers.l2_regularizer(scale=0.)
-    regularizer_decay = tf.contrib.layers.l2_regularizer(scale=regu_decay * 1.)
+    regularizer_decay = tf.contrib.layers.l2_regularizer(scale=regu_decay * 0.)
 
     # Rebuild model
     model = VGG_Combined(config, task_name, weight_a, weight_b, cluster_res_list, signal_list, musk=False, gamma=gamma,
@@ -63,11 +63,11 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     # Train
     session.run(tf.global_variables_initializer())
 
-    model.eval_once(session, model.test_init, -1)
+    model.eval_once(session, model.test_init, -1, None)
 
-    model.train(sess=session, n_epochs=20, task_name='AB', lr=0.01)
-    model.train(sess=session, n_epochs=30, task_name='AB', lr=0.001)
-    model.train(sess=session, n_epochs=30, task_name='AB', lr=0.0001)
+    # model.train(sess=session, n_epochs=20, task_name='AB', lr=0.01)
+    model.train(sess=session, n_epochs=80, task_name='AB', lr=0.01)
+    # model.train(sess=session, n_epochs=30, task_name='AB', lr=0.0001)
 
 
 def get_connection_signal(cluster_res_list, dim_list):
@@ -160,7 +160,7 @@ def pruning(model_path_1, model_path_2, gamma=10, ib_threshold=0.01, regu_decay=
                 256, 256, 256,
                 512, 512, 512,
                 512, 512, 512,
-                4096, 4096, 20]
+                512, 512, 20]
 
     print('[%s] Obtain model weights, layers output and labels' % (datetime.now()))
     weight_dict_a = pickle.load(open(model_path_1, 'rb'))
@@ -212,7 +212,7 @@ def pruning(model_path_1, model_path_2, gamma=10, ib_threshold=0.01, regu_decay=
 if __name__ == '__main__':
     path = '/local/home/david/Remote/models/model_weights/'
 
-    pruning(model_path_1=path + 'vgg_celeba1_0.908977_best',
-            model_path_2=path + 'vgg_celeba2_0.893588_best',
-            gamma=10,
+    pruning(model_path_1=path + 'vgg512_celeba1_0.907119_best',
+            model_path_2=path + 'vgg512_celeba2_0.892631_best',
+            gamma=15,
             ib_threshold=0.01)

@@ -21,7 +21,6 @@ from utils.config import process_config
 from utils.mi_gpu import kde_gpu, get_K_function, kde_in_gpu
 from datetime import datetime
 
-
 import matplotlib.pyplot as plt
 import tensorflow as tf
 import numpy as np
@@ -33,12 +32,57 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 # gpu 0
 # os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4eec6600-f5e3-f385-9b14-850ae9a2b236'
+
+
 # gpu 1
 os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4b0856cd-c698-63a2-0b6e-9a33d380f9c4'
 
 
-def argmin_mi(layer_output, labelixs, method_mi, binsize, labelprobs=None, labels=None, labels_unique=None,
-              labels_count=None, labels_inverse=None, entropy_func_upper=None):
+def draw_mi_hist(layers_output, labels):
+    # Labels init
+    entropy_func_upper = get_K_function()
+    labelixs_ = list()
+    labelprobs_ = list()
+    for label_index in range(labels.shape[1]):
+        labelixs = {}
+        labelixs[0] = labels[:, label_index] == -1
+        labelixs[1] = labels[:, label_index] == 1
+        labelixs_.append(labelixs)
+
+        prob_label = np.mean((labels[:, label_index] == 1).astype(np.float32), axis=0)
+        labelprobs = np.array([1 - prob_label, prob_label])
+        labelprobs_.append(labelprobs)
+
+    # Draw
+    for index_layer, output in enumerate(layers_output):
+        # 展开的操作
+        if len(output.shape) == 4:
+            # [batch_size,h,w,channel_size] --> [batch_size,channel_size] for conv
+            output = np.max(output, axis=(1, 2))
+
+        mi_list = list()
+        for index_neuron in range(output.shape[-1]):
+            _, mi = kde_in_gpu(np.expand_dims(output[..., index_neuron], axis=1), labelixs_, labelprobs_,
+                               entropy_func_upper)
+            mi_list += [mi]
+        fig = plt.figure()
+        plt.hist(mi_list, bins=100, normed=0)
+        plt.title('mi distribution with layer_' + str(index_layer))
+        plt.xlabel('MI')
+        plt.ylabel('Number of neurons')
+        plt.savefig('/local/home/david/Remote/models/model_weights/layer_' + str(index_layer) + '.jpg')
+        plt.close('all')
+        print('Complete drawing layer_' + str(index_layer))
+
+
+def draw_mi(model_path):
+    print('[%s] Obtain model weights, layers output and labels' % (datetime.now()))
+    _, layers_output_list_a, y_a, = get_layers_output('celeba1', model_path=model_path)
+
+    draw_mi_hist(layers_output_list_a, y_a)
+
+
+def argmin_mi(layer_output, labelixs, method_mi, binsize, labelprobs=None, entropy_func_upper=None):
     """
     Get the neuron in layer_output who has the minimal mi with label
     :param layer_output:
@@ -52,7 +96,8 @@ def argmin_mi(layer_output, labelixs, method_mi, binsize, labelprobs=None, label
     min_index_neuron = -1
 
     # Test:
-    mis = list()
+    # mi_list = list()
+    # index_list_zero = list()
 
     for index_neuron in range(layer_output.shape[-1]):
         shape_neuron_output = layer_output[..., index_neuron].shape
@@ -71,27 +116,28 @@ def argmin_mi(layer_output, labelixs, method_mi, binsize, labelprobs=None, label
             _, mi_neuron = kde_gpu(layer_output_expand, labelixs=labelixs, labelprobs=labelprobs,
                                    entropy_func_upper=entropy_func_upper)
         elif method_mi == 'kde_in':
-            # mi_neuron = kde_mi_independent(layer_output_expand, labels)
             _, mi_neuron = kde_in_gpu(layer_output_expand, labelixs, labelprobs, entropy_func_upper)
-        elif method_mi == 'kde_cus':
-            _, mi_neuron = kde_mi_cus(layer_output_expand, labels_unique, labels_count, labels_inverse)
 
+        # if mi_neuron <= 0.000001:
+        #     index_list_zero += [index_neuron]
 
-        mis += [mi_neuron]
+        # mi_list += [mi_neuron]
 
         if mi_neuron < mi_min or min_index_neuron == -1:
             mi_min = mi_neuron
             min_index_neuron = index_neuron
 
-    plt.scatter(layer_output.shape[-1], mis)
-    plt.show()
+    # _, dd = kde_in_gpu(layer_output[:,index_list_zero[1:2]], labelixs, labelprobs, entropy_func_upper)
+    # _, ddd = kde_in_gpu(layer_output[:, index_list_zero], labelixs, labelprobs, entropy_func_upper)
 
+    # plt.hist(mi_list, bins=80, normed=0)
+    # # plt.scatter(np.arange(layer_output.shape[-1]), mis, alpha=0.6)
+    # plt.savefig('/local/home/david/Remote/models/model_weights/dd.jpg')
 
     return min_index_neuron, mi_min
 
 
 def argmin_marginal_mi(layer_output, F, neuron_list_previous, labelixs, method_mi, binsize, labelprobs=None,
-                       labels=None, labels_unique=None, labels_count=None, labels_inverse=None,
                        entropy_func_upper=None):
     """
     Get the neuron in F who has the minimal marginal MI w.r.t neuron_list_previous
@@ -119,6 +165,9 @@ def argmin_marginal_mi(layer_output, F, neuron_list_previous, labelixs, method_m
             layer_output_expand = np.reshape(layer_output[..., neuron_list], newshape=(shape_neurons_output[0], -1))
         elif len(shape_neurons_output) == 2:
             layer_output_expand = layer_output[..., neuron_list]
+        elif len(shape_neurons_output) == 1:
+            # [batch_size, ]->[batch_size, 1]
+            layer_output_expand = np.expand_dims(layer_output[..., index_neuron], axis=1)
 
         if method_mi == 'bin':
             # 直方图画格子的方法
@@ -130,12 +179,7 @@ def argmin_marginal_mi(layer_output, F, neuron_list_previous, labelixs, method_m
             _, mi_neuron = kde_gpu(layer_output_expand, labelixs=labelixs, labelprobs=labelprobs,
                                    entropy_func_upper=entropy_func_upper)
         elif method_mi == 'kde_in':
-            # 当成20个彼此之间独立的label
-            # mi_neuron = kde_mi_independent(layer_output_expand, labels)
             _, mi_neuron = kde_in_gpu(layer_output_expand, labelixs, labelprobs, entropy_func_upper)
-        elif method_mi == 'kde_cus':
-            # 自己实现的kde方法，主要针对2^20unique label的场景
-            _, mi_neuron = kde_mi_cus(layer_output_expand, labels_unique, labels_count, labels_inverse)
 
         if mi_neuron < mi_min or min_index_neuron == -1:
             mi_min = mi_neuron
@@ -155,8 +199,7 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     :param regu_decay: regularizer for A->AB and B->AB
     :return:
     """
-    # config = process_config("../configs/vgg_net.json")
-    config = process_config("../configs/vgg_for_layer_output.json")
+    config = process_config("../configs/ib_vgg.json")
     gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True
 
@@ -183,100 +226,66 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     session.run(model.test_init)
 
     # Graph
-    summary_writer = tf.summary.FileWriter('/local/home/david/log/', session.graph)
+    # summary_writer = tf.summary.FileWriter('/local/home/david/log/', session.graph)
 
     model.eval_once(session, model.test_init, -1)
 
-    model.train(sess=session, n_epochs=20, task_name='A', lr=0.01)
-    model.train(sess=session, n_epochs=80, task_name='A', lr=0.001)
-    model.train(sess=session, n_epochs=80, task_name='A', lr=0.0001)
+    # model.get_CR(session, cluster_res_list)
+    model.train(sess=session, n_epochs=200, task_name='AB', lr=0.01)
+    # model.train(sess=session, n_epochs=80, task_name='A', lr=0.001)
+    # model.train(sess=session, n_epochs=80, task_name='A', lr=0.0001)
 
 
-def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_threshold, method_mi, dim_list, binsize):
+def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_threshold_dict, method_mi, dim_list,
+                   binsize,
+                   layer_index_range):
     """
     Get the clusters of all layers (except output layer).
     :param y_a: labels of model a
     :param y_b: labels of model b
     :param layer_output_list_1: outputs of layers in model a except output layer
     :param layer_output_list_2: outputs of layers in model b except output layer
-    :param alpha_threshold: threshold to divide neurons into different clusters
+    :param alpha_threshold_dict: threshold to divide neurons into different clusters
     :param method_mi: 'kde' or 'bin'
-    :param N_total: number of iteration
     :param binsize: length of the bin
     :return:
     """
-    num_layer = 15
 
     num_label_a = y_a.shape[1]
     num_label_b = y_b.shape[1]
 
     # 获得Y_A和Y_B统计信息
-    labelixs_a, labelprobs_a = None, None
-    unique_value_a, unique_counts_a, unique_inverse_a = None, None, None
+    entropy_func_upper = get_K_function()
 
-    labelixs_b, labelprobs_b = None, None
-    unique_value_b, unique_counts_b, unique_inverse_b = None, None, None
+    labelixs_a = list()
+    labelprobs_a = list()
+    for label_index in range(y_a.shape[1]):
+        labelixs = {}
+        labelixs[0] = y_a[:, label_index] == -1
+        labelixs[1] = y_a[:, label_index] == 1
+        labelixs_a.append(labelixs)
 
-    entropy_func_upper = None
+        prob_label = np.mean((y_a[:, label_index] == 1).astype(np.float32), axis=0)
+        labelprobs = np.array([1 - prob_label, prob_label])
+        labelprobs_a.append(labelprobs)
 
-    # 'kde_in'的方法不需要
-    if method_mi in ['kde', 'kde_gpu', 'kde_cus', 'bin', 'kde_in']:
-        # # For Y_A
-        # uniqueids_a = np.ascontiguousarray(y_a).view(np.dtype((np.void, y_a.dtype.itemsize * y_a.shape[1])))
-        # unique_value_a, unique_inverse_a, unique_counts_a = np.unique(uniqueids_a, return_index=False,
-        #                                                               return_inverse=True, return_counts=True)
-        # # 每一个独特的行（label）在整体中出现的概率，相当于labelprobs
-        # labelprobs_a = np.asarray(unique_counts_a / float(sum(unique_counts_a)))
-        # # 每一个独特的行（label）在整体中出现的位置
-        # labelixs_a = {}
-        # for label_index, label_value in enumerate(unique_value_a):
-        #     labelixs_a[label_index] = unique_inverse_a == label_index
-        #
-        # # For Y_B
-        # uniqueids_b = np.ascontiguousarray(y_b).view(np.dtype((np.void, y_b.dtype.itemsize * y_b.shape[1])))
-        # unique_value_b, unique_inverse_b, unique_counts_b = np.unique(uniqueids_b, return_index=False,
-        #                                                               return_inverse=True, return_counts=True)
-        #
-        # labelprobs_b = np.asarray(unique_counts_b / float(sum(unique_counts_b)))
-        #
-        # labelixs_b = {}
-        # for label_index, label_value in enumerate(unique_value_b):
-        #     labelixs_b[label_index] = unique_inverse_b == label_index
+    labelixs_b = list()
+    labelprobs_b = list()
+    for label_index in range(y_b.shape[1]):
+        labelixs = {}
+        labelixs[0] = y_b[:, label_index] == -1
+        labelixs[1] = y_b[:, label_index] == 1
+        labelixs_b.append(labelixs)
 
-        # For gpu
-
-        entropy_func_upper = get_K_function()
-
-        labelixs_a = list()
-        labelprobs_a = list()
-        for label_index in range(y_a.shape[1]):
-            labelixs = {}
-            labelixs[0] = y_a[:, label_index] == -1
-            labelixs[1] = y_a[:, label_index] == 1
-            labelixs_a.append(labelixs)
-
-            prob_label = np.mean((y_a[:, label_index] == 1).astype(np.float32), axis=0)
-            labelprobs = np.array([1 - prob_label, prob_label])
-            labelprobs_a.append(labelprobs)
-
-        labelixs_b = list()
-        labelprobs_b = list()
-        for label_index in range(y_b.shape[1]):
-            labelixs = {}
-            labelixs[0] = y_b[:, label_index] == -1
-            labelixs[1] = y_b[:, label_index] == 1
-            labelixs_b.append(labelixs)
-
-            prob_label = np.mean((y_b[:, label_index] == 1).astype(np.float32), axis=0)
-            labelprobs = np.array([1 - prob_label, prob_label])
-            labelprobs_b.append(labelprobs)
-
+        prob_label = np.mean((y_b[:, label_index] == 1).astype(np.float32), axis=0)
+        labelprobs = np.array([1 - prob_label, prob_label])
+        labelprobs_b.append(labelprobs)
 
     # Record list of clusters for all layers
     cluster_res_list = list()
 
     # Init dictionary to store clusters
-    for layer_index in range(num_layer):
+    for layer_index in range(15):
         # Total number of neurons
         num_neuron_total = dim_list[layer_index] * 2
 
@@ -296,9 +305,21 @@ def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_thr
     cluster_layer_dict['AB'] = list()
     cluster_res_list += [cluster_layer_dict]
 
+    # 载入之前的结果
+    for layer_index in layer_index_range:
+        cluster_res_list[layer_index] = pickle.load(open(
+            '/local/home/david/Remote/models/model_weights/cluster_results/cluster_res_for_layer-' + str(
+                layer_index) + '_alpha-0.2', 'rb'))
+
     # The main loop
-    for layer_index in range(13, num_layer):
-        print('[%s] Cluster layer %d' % (datetime.now(), layer_index))
+    for layer_index in layer_index_range:
+        # Different alpha_threshold for conv and fc
+        if layer_index < 13:
+            alpha_threshold = alpha_threshold_dict['conv']
+        else:
+            alpha_threshold = alpha_threshold_dict['fc']
+
+        print('[%s] Cluster layer %d, alpha threshold = %f' % (datetime.now(), layer_index, alpha_threshold))
         # Total number of neurons
         num_neuron_total = dim_list[layer_index] * 2
 
@@ -319,57 +340,61 @@ def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_thr
         layer_output_all = np.concatenate((layer_output_1, layer_output_2), axis=-1)
 
         # All neurons (Line2)
-        F_A = np.arange(num_neuron_total).tolist()
-        F_B = np.arange(num_neuron_total).tolist()
+        # 可能是所有的neurons，或者是从文件中读取出来的结果
+        F_A = cluster_res_list[layer_index]['AB']
+        F_B = cluster_res_list[layer_index]['AB']
 
         # Init with the neuron of F_A that has the  minimal MI with Y_B
-        min_index_neuron, mi_min = argmin_mi(layer_output_all[..., F_A], labelixs_b, method_mi, binsize, labelprobs_b,
-                                             y_b, unique_value_b, unique_counts_b, unique_inverse_b, entropy_func_upper)
-        print('[%s] MI with Y_B: Min_index_neuron=%d,  mi_min=%f' % (datetime.now(), min_index_neuron, mi_min))
+        min_index_neuron, mi_min = argmin_marginal_mi(layer_output_all, F_A, cluster_res_list[layer_index]['A'],
+                                                      labelixs_b, method_mi, binsize, labelprobs_b, entropy_func_upper)
+
+        # min_index_neuron, mi_min = argmin_mi(layer_output_all[..., F_A], labelixs_b, method_mi, binsize, labelprobs_b,
+        #                                      entropy_func_upper)
+        print('[%s] MI with Y_B, No.1: Min_index_neuron=%d,  mi_min=%f' % (datetime.now(), min_index_neuron, mi_min))
 
         # Lines 3-4
         F_A.remove(min_index_neuron)
         cluster_res_list[layer_index]['A'].append(min_index_neuron)
+        count_a = 1
 
         while mi_min <= alpha_threshold:
             # Traverse neurons in F_A and find the neuron with the minimal mi with Y_B
             min_index_neuron, mi_min = argmin_marginal_mi(layer_output_all, F_A, cluster_res_list[layer_index]['A'],
-                                                          labelixs_b, method_mi, binsize, labelprobs_b, y_b,
-                                                          unique_value_b, unique_counts_b, unique_inverse_b,
+                                                          labelixs_b, method_mi, binsize, labelprobs_b,
                                                           entropy_func_upper)
-            print('[%s] MI with Y_B: Min_index_neuron=%d,  mi_min=%f' % (datetime.now(), min_index_neuron, mi_min))
+            count_a += 1
+            print('[%s] MI with Y_B, No.%d: Min_index_neuron=%d,  mi_min=%f' % (
+                datetime.now(), count_a, min_index_neuron, mi_min))
             # Lines 7-8
             F_A.remove(min_index_neuron)
             cluster_res_list[layer_index]['A'].append(min_index_neuron)
 
-        min_index_neuron, mi_min = argmin_mi(layer_output_all[..., F_B], labelixs_a, method_mi, binsize, labelprobs_a,
-                                             y_a, unique_value_a, unique_counts_a, unique_inverse_a, entropy_func_upper)
-        print('[%s] MI with Y_A: Min_index_neuron=%d,  mi_min=%f' % (datetime.now(), min_index_neuron, mi_min))
-
+        min_index_neuron, mi_min = argmin_marginal_mi(layer_output_all, F_B, cluster_res_list[layer_index]['B'],
+                                                      labelixs_a, method_mi, binsize, labelprobs_a,
+                                                      entropy_func_upper)
+        # min_index_neuron, mi_min = argmin_mi(layer_output_all[..., F_B], labelixs_a, method_mi, binsize, labelprobs_a,
+        #                                      entropy_func_upper)
+        print('[%s] MI with Y_A, No. 1: Min_index_neuron=%d,  mi_min=%f' % (datetime.now(), min_index_neuron, mi_min))
+        count_b = 1
         # Line 11
         F_B.remove(min_index_neuron)
-
-        # Test if min_index_neuron is also irrelevant to B
-        if min_index_neuron in cluster_res_list[layer_index]['A']:
-            cluster_res_list[layer_index]['A'].remove(min_index_neuron)
-            cluster_res_list[layer_index]['AB'].remove(min_index_neuron)
-        else:
-            cluster_res_list[layer_index]['B'].append(min_index_neuron)
+        cluster_res_list[layer_index]['B'].append(min_index_neuron)
 
         while mi_min <= alpha_threshold:
             # Traverse neurons in F_B to find the neuron with the minimal mi with Y_A
             min_index_neuron, mi_min = argmin_marginal_mi(layer_output_all, F_B, cluster_res_list[layer_index]['B'],
-                                                          labelixs_a, method_mi, binsize, labelprobs_a, y_a,
-                                                          unique_value_a, unique_counts_a, unique_inverse_a,
+                                                          labelixs_a, method_mi, binsize, labelprobs_a,
                                                           entropy_func_upper)
-            print('[%s] MI with Y_A: Min_index_neuron=%d,  mi_min=%f' % (datetime.now(), min_index_neuron, mi_min))
+            count_b += 1
+            print('[%s] MI with Y_A, No.%d: Min_index_neuron=%d,  mi_min=%f' % (
+                datetime.now(), count_b, min_index_neuron, mi_min))
 
-            if min_index_neuron in cluster_res_list[layer_index]['A']:
-                cluster_res_list[layer_index]['A'].remove(min_index_neuron)
-                cluster_res_list[layer_index]['AB'].remove(min_index_neuron)
-            else:
-                cluster_res_list[layer_index]['B'].append(min_index_neuron)
-
+            # if min_index_neuron in cluster_res_list[layer_index]['A']:
+            #     cluster_res_list[layer_index]['A'].remove(min_index_neuron)
+            #     cluster_res_list[layer_index]['AB'].remove(min_index_neuron)
+            # else:
+            #     cluster_res_list[layer_index]['B'].append(min_index_neuron)
+            cluster_res_list[layer_index]['B'].append(min_index_neuron)
             F_B.remove(min_index_neuron)
 
         # Sort the list of A and B
@@ -378,7 +403,16 @@ def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_thr
 
         cluster_res_list[layer_index]['AB'] = list(
             set(cluster_res_list[layer_index]['AB']) - set(cluster_res_list[layer_index]['A']) - set(
-                cluster_res_list[layer_index]['A']))
+                cluster_res_list[layer_index]['B']))
+
+        union = set(cluster_res_list[layer_index]['A']) & set(cluster_res_list[layer_index]['B'])
+        cluster_res_list[layer_index]['A'] = list(set(cluster_res_list[layer_index]['A']) - union)
+        cluster_res_list[layer_index]['B'] = list(set(cluster_res_list[layer_index]['B']) - union)
+
+        # 保存每一层的结果，防止丢失
+        path = '/local/home/david/Remote/models/model_weights/cluster_results/'
+        pickle.dump(cluster_res_list[layer_index],
+                    open(path + 'cluster_res_for_layer-' + str(layer_index) + '_alpha-' + str(alpha_threshold), 'wb'))
 
     return cluster_res_list
 
@@ -411,7 +445,7 @@ def get_layers_output(task_name, model_path, with_relu=True):
     model.inference()
 
     sess.run(tf.global_variables_initializer())
-    sess.run(model.test_init)
+    sess.run(model.train_init)
 
     # layers_output_tf = [layer.layer_output for layer in model.layers[:-1]]
     layers_output_tf = [layer.layer_output for layer in model.layers]
@@ -494,7 +528,8 @@ def get_connection_signal(cluster_res_list, dim_list):
     return signal_list
 
 
-def pruning(model_path_1, model_path_2, alpha_threshold, method_mi, binsize, gamma=10, ib_threshold=0.01, regu_decay=0):
+def pruning(model_path_1, model_path_2, alpha_threshold_dict, method_mi, binsize, layer_index_range, gamma=10,
+            ib_threshold=0.01, regu_decay=0, if_rebuild=False, path_cluster_res_list=None):
     """
 
     :param model_path_1:
@@ -513,19 +548,25 @@ def pruning(model_path_1, model_path_2, alpha_threshold, method_mi, binsize, gam
                 256, 256, 256,
                 512, 512, 512,
                 512, 512, 512,
-                4096, 4096, 20]
+                512, 512, 20]
 
-    print('[%s] Obtain model weights, layers output and labels' % (datetime.now()))
-    weight_dict_a, layers_output_list_a, y_a, = get_layers_output('celeba1', model_path=model_path_1)
-    weight_dict_b, layers_output_list_b, y_b, = get_layers_output('celeba2', model_path=model_path_2)
+    if path_cluster_res_list is None:
+        print('[%s] Obtain model weights, layers output and labels' % (datetime.now()))
+        weight_dict_a, layers_output_list_a, y_a, = get_layers_output('celeba1', model_path=model_path_1)
+        weight_dict_b, layers_output_list_b, y_b, = get_layers_output('celeba2', model_path=model_path_2)
 
-    print('[%s] Divide neurons in each layer into clusters A, B and AB' % (datetime.now()))
-    cluster_res_list = combine_models(y_a, y_b, layers_output_list_a, layers_output_list_b,
-                                      alpha_threshold=alpha_threshold, method_mi=method_mi, dim_list=dim_list,
-                                      binsize=binsize)
-
-    print('[%s] Save cluster results' % (datetime.now()))
-    pickle.dump(open('/local/home/david/Remote/models/model_weights/cluster_res_list_alpha-'+str(alpha_threshold), 'wb'))
+        print('[%s] Divide neurons in each layer into clusters A, B and AB' % (datetime.now()))
+        cluster_res_list = combine_models(y_a, y_b, layers_output_list_a, layers_output_list_b,
+                                          alpha_threshold_dict=alpha_threshold_dict, method_mi=method_mi,
+                                          dim_list=dim_list, binsize=binsize, layer_index_range=layer_index_range)
+        print('[%s] Save cluster results' % (datetime.now()))
+        pickle.dump(cluster_res_list, open(
+            '/local/home/david/Remote/models/model_weights/cluster_res_list_' + method_mi + '_alpha-' + str(
+                alpha_threshold_dict), 'wb'))
+    else:
+        weight_dict_a = pickle.load(open(model_path_1, 'rb'))
+        weight_dict_b = pickle.load(open(model_path_2, 'rb'))
+        cluster_res_list = pickle.load(open(path_cluster_res_list, 'rb'))
 
     # TODO: 以下为test
     # cluster_res_list = list()
@@ -562,21 +603,46 @@ def pruning(model_path_1, model_path_2, alpha_threshold, method_mi, binsize, gam
         print('Layer %d: num_A=%d   |   num_AB=%d(%d:%d)   |   num_B=%d |   num_pruned=%d' % (
             layer_index + 1, num_A, num_AB, num_AB_from_a, num_AB_from_b, num_B, num_pruned))
 
-    # 获得连接与否的flag信号
-    signal_list = get_connection_signal(cluster_res_list, dim_list)
+    if if_rebuild:
+        # 获得连接与否的flag信号
+        signal_list = get_connection_signal(cluster_res_list, dim_list)
 
-    print('[%s] Rebuild and train the combined model' % (datetime.now()))
-    rebuild_model(weight_dict_a, weight_dict_b, cluster_res_list, signal_list, gamma=gamma, regu_decay=regu_decay,
-                  ib_threshold=ib_threshold)
+        print('[%s] Rebuild and train the combined model' % (datetime.now()))
+        rebuild_model(weight_dict_a, weight_dict_b, cluster_res_list, signal_list, gamma=gamma, regu_decay=regu_decay,
+                      ib_threshold=ib_threshold)
 
 
 if __name__ == '__main__':
     path = '/local/home/david/Remote/models/model_weights/'
 
-    pruning(model_path_1=path + 'vgg_celeba1_0.908977_best',
-            model_path_2=path + 'vgg_celeba2_0.893588_best',
-            alpha_threshold=0.001,
-            method_mi='bin',
-            binsize=0.5,
-            gamma=10,
-            ib_threshold=0.01)
+    # draw_mi(path + 'vgg512_celeba2_0.892631_best')
+
+    pruning(model_path_1=path + 'vgg512_celeba1_0.907119_best',
+            model_path_2=path + 'vgg512_celeba2_0.892631_best',
+            alpha_threshold_dict={'conv': 0.2, 'fc': 0.2},
+            method_mi='kde_in',
+            binsize=0.05,
+            layer_index_range=[13, 14],
+            gamma=15,
+            ib_threshold=0.01,
+            if_rebuild=False,
+            path_cluster_res_list=None)
+    # path_cluster_res_list='/local/home/david/Remote/models/model_weights/cluster_results/cluster_results')
+
+    # path = '/local/home/david/Remote/models/model_weights/cluster_results/'
+    #
+    # res = list()
+    # for i in range(15):
+    #     if i < 13:
+    #         name = path + 'cluster_res_for_layer-' + str(i) + '_alpha-0.2'
+    #     else:
+    #         name = path + 'cluster_res_for_layer-' + str(i) + '_alpha-0.1'
+    #     w = pickle.load(open(name, 'rb'))
+    #     w['AB'] = list(set(w['AB']) - set(w['B']))
+    #     res += [w]
+    #
+    # cluster_layer_dict = dict()
+    # cluster_layer_dict['A'] = [x for x in range(20)]
+    # cluster_layer_dict['B'] = [x + 20 for x in range(20)]
+    # cluster_layer_dict['AB'] = list()
+    # res += [cluster_layer_dict]

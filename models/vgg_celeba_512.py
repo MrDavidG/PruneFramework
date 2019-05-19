@@ -75,14 +75,14 @@ class VGGNet(BaseModel):
 
         # fc layers
         dim_fc = np.int(self.X.shape[2] // 32) ** 2 * 512
-        weight_dict['fc6/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / dim_fc), size=[dim_fc, 4096]).astype(
+        weight_dict['fc6/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / dim_fc), size=[dim_fc, 512]).astype(
             dtype=np.float32)
-        weight_dict['fc6/biases'] = bias_variable([4096])
-        weight_dict['fc7/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / 4096), size=[4096, 4096]).astype(
+        weight_dict['fc6/biases'] = bias_variable([512])
+        weight_dict['fc7/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / 512), size=[512, 512]).astype(
             np.float32)
-        weight_dict['fc7/biases'] = bias_variable([4096])
-        weight_dict['fc8/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / 4096),
-                                                      size=[4096, self.n_classes]).astype(np.float32)
+        weight_dict['fc7/biases'] = bias_variable([512])
+        weight_dict['fc8/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / 512),
+                                                      size=[512, self.n_classes]).astype(np.float32)
         weight_dict['fc8/biases'] = bias_variable([self.n_classes])
 
         return weight_dict
@@ -96,7 +96,7 @@ class VGGNet(BaseModel):
                                  256, 256, 256,
                                  512, 512, 512,
                                  512, 512, 512,
-                                 4096, 4096])
+                                 512, 512])
             for i, name_layer in enumerate(['conv1_1', 'conv1_2',
                                             'conv2_1', 'conv2_2',
                                             'conv3_1', 'conv3_2', 'conv3_3',
@@ -222,7 +222,7 @@ class VGGNet(BaseModel):
         self.optimize()
         self.evaluate()
 
-    def train_one_epoch(self, sess, init, epoch, step):
+    def train_one_epoch(self, sess, init, epoch, step, time_stamp):
         sess.run(init)
         total_loss = 0
         total_kl = 0
@@ -244,21 +244,28 @@ class VGGNet(BaseModel):
                 n_batches += 1
 
                 if n_batches % 5 == 0:
-                    print(
-                        '\repoch={:d}, batch={:d}/{:d}, curr_loss={:f}, train_acc={:%}, train_kl={:f}, used_time:{:.2f}s'.format(
-                            epoch + 1,
-                            n_batches,
-                            self.total_batches_train,
-                            total_loss / n_batches,
-                            total_correct_preds / (n_batches * self.config.batch_size),
-                            total_kl / n_batches,
-                            time.time() - time_last),
-                        end=' ')
+                    str_ = 'epoch={:d}, batch={:d}/{:d}, curr_loss={:f}, train_acc={:%}, train_kl={:f}, used_time:{:.2f}s'.format(
+                        epoch + 1,
+                        n_batches,
+                        self.total_batches_train,
+                        total_loss / n_batches,
+                        total_correct_preds / (n_batches * self.config.batch_size),
+                        total_kl / n_batches,
+                        time.time() - time_last)
+
+                    print('\r' + str_, end=' ')
 
                     time_last = time.time()
 
         except tf.errors.OutOfRangeError:
             pass
+
+        # 写文件
+        with open(
+                '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_ib_' + time_stamp,
+                'a+') as f:
+            f.write(str_ + '\n')
+
         return step
 
     def set_global_tensor(self, training_tensor, regu_conv, regu_fc):
@@ -284,7 +291,7 @@ class VGGNet(BaseModel):
             weight_dict[meta_key_in_weight] = self.meta_val(meta_key)
         return weight_dict
 
-    def eval_once(self, sess, init, epoch):
+    def eval_once(self, sess, init, epoch, time_stamp):
         sess.run(init)
         total_loss = 0
         total_correct_preds = 0
@@ -303,10 +310,19 @@ class VGGNet(BaseModel):
             pass
         time_end = time.time()
         accu = total_correct_preds / self.n_samples_val
-        print('\nEpoch:{:d}, val_acc={:%}, val_loss={:f}, used_time:{:.2f}s'.format(epoch + 1,
-                                                                                    accu,
-                                                                                    total_loss / n_batches,
-                                                                                    time_end - time_start))
+        str_ = 'Epoch:{:d}, val_acc={:%}, val_loss={:f}, used_time:{:.2f}s'.format(epoch + 1,
+                                                                                     accu,
+                                                                                     total_loss / n_batches,
+                                                                                     time_end - time_start)
+        print('\n' + str_)
+
+        # 写文件
+        if time_stamp is not None:
+            with open(
+                    '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_ib_' + time_stamp,
+                    'a+') as f:
+                f.write(str_)
+
         return accu
 
     def train(self, sess, n_epochs, lr=None):
@@ -314,24 +330,37 @@ class VGGNet(BaseModel):
             self.config.learning_rate = lr
             self.optimize()
 
+        count_86 = 3
+
+        time_stamp = str(datetime.now())
+
         sess.run(tf.variables_initializer(self.opt.variables()))
         step = self.global_step_tensor.eval(session=sess)
         for epoch in range(n_epochs):
-            step = self.train_one_epoch(sess, self.train_init, epoch, step)
-            accu = self.eval_once(sess, self.test_init, epoch)
+            step = self.train_one_epoch(sess, self.train_init, epoch, step, time_stamp)
+            accu = self.eval_once(sess, self.test_init, epoch, time_stamp)
 
             if self.prune_method == 'info_bottle':
                 cr = self.get_CR(sess)
+                with open(
+                        '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_ib_' + time_stamp,
+                        'a+') as f:
+                    f.write(' cr: ' + str(cr) + '\n')
 
-            if (epoch + 1) % 10 == 0 or accu >= 0.89:
+            if (epoch + 1) % 10 == 0 or (accu >= 0.88 and cr < 0.8):
                 if self.prune_method == 'info_bottle':
-                    save_path = '/local/home/david/Remote/models/model_weights/vgg_ib_' + self.task_name + '_' + str(
+                    save_path = '/local/home/david/Remote/models/model_weights/vgg512_ib_' + self.task_name + '_' + str(
                         self.prune_threshold) + '_' + str(
                         np.around(accu, decimals=6)) + '_cr-' + str(np.around(cr, decimals=5))
                 else:
-                    save_path = '/local/home/david/Remote/models/model_weights/vgg_' + self.task_name + '_' + str(
+                    save_path = '/local/home/david/Remote/models/model_weights/vgg512_' + self.task_name + '_' + str(
                         np.around(accu, decimals=6))
                 self.save_weight(sess, save_path)
+
+            if accu < 0.873:
+                count_86 -= 1
+                if count_86 <= 0:
+                    break
 
     def test(self, sess):
         sess.run(self.test_init)
@@ -385,7 +414,7 @@ class VGGNet(BaseModel):
             in_pruned = prune_state[n]
         # for fc layers
         offset = len(prune_state) - 2
-        for n, n_out in enumerate([4096, 4096]):
+        for n, n_out in enumerate([512, 512]):
             n_params = in_channels * n_out
             total_params += n_params
             n_remain = (in_channels - in_pruned) * (n_out - prune_state[n + offset])
@@ -412,7 +441,7 @@ if __name__ == '__main__':
     gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True
 
-    for task_name in ['celeba']:
+    for task_name in ['celeba2']:
         print('Training on task {:s}'.format(task_name))
         tf.reset_default_graph()
         # session for training
@@ -421,22 +450,28 @@ if __name__ == '__main__':
 
         training = tf.placeholder(dtype=tf.bool, name='training')
 
-        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.0)
-        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.0)
+        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.00)
+        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.00)
 
         # Train
-        model = VGGNet(config, task_name, musk=False, gamma=15)
+        model = VGGNet(config, task_name, musk=False, gamma=15,
+                       model_path='/local/home/david/Remote/models/model_weights/vgg512_celeba2_0.892631_best')
         model.set_global_tensor(training, regularizer_conv, regularizer_fc)
         model.build()
 
         session.run(tf.global_variables_initializer())
-        model.eval_once(session, model.test_init, -1)
+        model.eval_once(session, model.test_init, -1, None)
 
-        model.train(sess=session, n_epochs=50, lr=0.01)
+        # model.train(sess=session, n_epochs=40, lr=0.01)
 
-        model.train(sess=session, n_epochs=80, lr=0.001)
+        model.train(sess=session, n_epochs=10, lr=0.01)
+        model.kl_factor = 8e-6
+        model.loss()
+        model.optimize()
+        model.evaluate()
+        model.train(sess=session, n_epochs=100, lr=0.01)
 
-        model.train(sess=session, n_epochs=40, lr=0.0001)
+        # model.train(sess=session, n_epochs=30, lr=0.0001)
 
 
 def exp_celeba(task_name_list, model_path=0, regularizer=0, is_vib=False, gamma=None):

@@ -542,14 +542,14 @@ class VGG_Combined(BaseModel):
                 self.op_opt = self.opt.minimize(self.op_loss)
 
                 # grads_and_vars is a list of tuples
-                # params_A, params_AB, params_B = self.get_params()
-                #
-                # grads_vars_a = self.opt.compute_gradients(self.op_loss, params_A + params_AB)
-                # grads_vars_b = self.opt.compute_gradients(self.op_loss, params_AB + params_B)
-                #
-                # # Ask the optimizer to apply the capped gradients
-                # self.op_opt_a = self.opt.apply_gradients(grads_vars_a)
-                # self.op_opt_b = self.opt.apply_gradients(grads_vars_b)
+                params_A, params_AB, params_B = self.get_params()
+
+                grads_vars_a = self.opt.compute_gradients(self.op_loss, params_A + params_AB)
+                grads_vars_b = self.opt.compute_gradients(self.op_loss, params_AB + params_B)
+
+                # Ask the optimizer to apply the capped gradients
+                self.op_opt_a = self.opt.apply_gradients(grads_vars_a)
+                self.op_opt_b = self.opt.apply_gradients(grads_vars_b)
 
     def evaluate(self):
         dim_label_single = tf.cast(tf.shape(self.Y)[1] / 2, tf.int32)
@@ -587,12 +587,12 @@ class VGG_Combined(BaseModel):
         total_correct_preds_b = 0
         n_batches = 0
 
-        # if task_name == 'A':
-        #     op_opt = self.op_opt_a
-        # elif task_name == 'B':
-        #     op_opt = self.op_opt_b
-        # else:
-        op_opt = self.op_opt
+        if task_name == 'A':
+            op_opt = self.op_opt_a
+        elif task_name == 'B':
+            op_opt = self.op_opt_b
+        else:
+            op_opt = self.op_opt
 
         time_last = time.time()
 
@@ -617,15 +617,15 @@ class VGG_Combined(BaseModel):
 
                 if n_batches % 5 == 0:
                     str_ = 'epoch={:d}, batch={:d}/{:d}, curr_loss={:f}, train_acc={:%} | a={:%} | b={:%},  train_kl={:f}, used_time:{:.2f}s'.format(
-                        epoch + 1,
-                        n_batches,
-                        self.total_batches_train,
-                        total_loss / n_batches,
-                        total_correct_preds / (n_batches * self.config.batch_size),
-                        total_correct_preds_a / (n_batches * self.config.batch_size),
-                        total_correct_preds_b / (n_batches * self.config.batch_size),
-                        total_kl / n_batches,
-                        time.time() - time_last)
+                            epoch + 1,
+                            n_batches,
+                            self.total_batches_train,
+                            total_loss / n_batches,
+                            total_correct_preds / (n_batches * self.config.batch_size),
+                            total_correct_preds_a / (n_batches * self.config.batch_size),
+                            total_correct_preds_b / (n_batches * self.config.batch_size),
+                            total_kl / n_batches,
+                            time.time() - time_last)
                     print('\r' + str_, end=' ')
 
                     time_last = time.time()
@@ -633,7 +633,6 @@ class VGG_Combined(BaseModel):
         except tf.errors.OutOfRangeError:
             pass
 
-        # 写文件
         with open('/local/home/david/Remote/models/model_weights/log_vgg_combine_' + time_stamp, 'a+') as f:
             f.write(str_ + '\n')
 
@@ -689,10 +688,8 @@ class VGG_Combined(BaseModel):
         accu = total_correct_preds / self.n_samples_val
         accu_a = total_correct_preds_a / self.n_samples_val
         accu_b = total_correct_preds_b / self.n_samples_val
-
         str_ = 'Epoch:{:d}, val_acc={:%} | a={:%} | b={:%}, val_loss={:f}, used_time:{:.2f}s'.format(
             epoch + 1, accu, accu_a, accu_b, total_loss / n_batches, time_end - time_start)
-
         print('\n' + str_)
 
         # 写文件
@@ -707,7 +704,7 @@ class VGG_Combined(BaseModel):
             self.config.learning_rate = lr
             self.optimize()
 
-        count_86 = 4
+        count_86 = 3
 
         time_stamp = str(datetime.now())
 
@@ -717,29 +714,29 @@ class VGG_Combined(BaseModel):
             step = self.train_one_epoch(sess, self.train_init, epoch, step, task_name, time_stamp)
             accu, accu_a, accu_b = self.eval_once(sess, self.test_init, epoch, time_stamp)
 
-            if self.prune_method == 'info_bottle':
-                cr = self.get_CR(sess, self.cluster_res_list)
 
-                with open('/local/home/david/Remote/models/model_weights/log_vgg_combine_' + time_stamp, 'a+') as f:
+            if self.prune_method == 'info_bottle':
+                cr = self.get_CR(sess)
+                with open('/local/home/david/Remote/models/model_weights/log_vgg_full_connect_' + time_stamp, 'a+') as f:
                     f.write(' cr: ' + str(cr) + '\n')
 
-            if (epoch + 1) % 10 == 0 or (accu >= 0.88 and cr < 0.8):
+            if (epoch + 1) % 10 == 0 or accu >= 0.88:
                 if self.prune_method == 'info_bottle':
-                    save_path = '/local/home/david/Remote/models/model_weights/vgg512_combine_ib_' + self.task_name + '_' + str(
+                    save_path = '/local/home/david/Remote/models/model_weights/vgg_full_connect_ib_' + self.task_name + '_' + str(
                         self.prune_threshold) + '_' + str(
-                        np.around(accu, decimals=4)) + '-' + str(np.around(accu_a, decimals=4)) + '-' + str(
-                        np.around(accu_b,
-                                  decimals=4)) + '_cr-' + str(
-                        np.around(cr, decimals=4))
+                        np.around(accu, decimals=4)) + '-' + str(np.around(accu_a, decimals=4)) + '-' + str(np.around(accu_b,
+                                                                                                            decimals=4)) + '_cr-' + str(
+                            np.around(cr, decimals=4))
                 else:
-                    save_path = '/local/home/david/Remote/models/model_weights/vgg512_combine_' + self.task_name + '_' + str(
+                    save_path = '/local/home/david/Remote/models/model_weights/vgg_full_connect_' + self.task_name + '_' + str(
                         np.around(accu, decimals=4))
                 self.save_weight(sess, save_path)
 
-            if accu < 0.875:
+            if accu < 0.865:
                 count_86 -= 1
                 if count_86 <= 0:
                     break
+
 
     def test(self, sess):
         sess.run(self.test_init)
@@ -761,121 +758,55 @@ class VGG_Combined(BaseModel):
             '\nTesting {}, val_acc={:%}, val_loss={:f}'.format(self.task_name, total_correct_preds / self.n_samples_val,
                                                                total_loss / n_batches))
 
-    def get_CR(self, sess, cluster_res_list):
-        layers_name = ['conv1_1', 'conv1_2',
-                       'conv2_1', 'conv2_2',
-                       'conv3_1', 'conv3_2', 'conv3_3',
-                       'conv4_1', 'conv4_2', 'conv4_3',
-                       'conv5_1', 'conv5_2', 'conv5_3',
-                       'fc6', 'fc7', 'fc8']
-
-        # 都是做mask之前的入度和出度
-        num_out_channel_dict = dict()
-        num_in_channel_dict = dict()
-
-        for layer_index, cluster_layer in enumerate(cluster_res_list):
-            layer_name = layers_name[layer_index]
-            num_A = len(cluster_layer['A'])
-            num_out_channel_dict[layer_name + '/A'] = num_A
-
-            num_AB = len(cluster_layer['AB'])
-            num_out_channel_dict[layer_name + '/AB'] = num_AB
-
-            num_B = len(cluster_layer['B'])
-            num_out_channel_dict[layer_name + '/B'] = num_B
-
-            if layer_index == 0:
-                num_in_channel_dict[layer_name + '/A'] = 3
-                num_in_channel_dict[layer_name + '/AB'] = 3
-                num_in_channel_dict[layer_name + '/B'] = 3
-            else:
-                num_A_last = len(cluster_res_list[layer_index]['A'])
-                num_AB_last = len(cluster_res_list[layer_index]['AB'])
-                num_B_last = len(cluster_res_list[layer_index]['B'])
-
-                num_in_channel_dict[layer_name + '/A'] = num_A_last + num_AB_last
-                num_in_channel_dict[layer_name + '/AB'] = num_AB_last
-                num_in_channel_dict[layer_name + '/B'] = num_AB_last + num_B_last
-
-        # 输出被prune的数量
+    def get_CR(self, sess):
+        # Obtain all masks
         masks = list()
-        layers_type = list()
-        layers_name_list = list()
         for layer in self.layers:
             if layer.layer_type == 'C_ib' or layer.layer_type == 'F_ib':
-                # 和musks是一一对应的关系
-                layers_name_list += [layer.layer_name]
-                layers_type += [layer.layer_type]
                 masks += [layer.get_mask(threshold=self.prune_threshold)]
 
-        # 获得具体的mask
         masks = sess.run(masks)
+        n_classes = self.Y.shape.as_list()[1]
 
         # how many channels/dims are prune in each layer
         prune_state = [np.sum(mask == 0) for mask in masks]
 
-        # 记录一下每一层的出度被剪枝了多少
-        out_prune_dict = dict()
-        for i, layer_name in enumerate(layers_name_list):
-            # 这一层被剪枝了多少
-            out_prune_dict[layer_name] = prune_state[i]
-
-        # 这一层被剪枝后剩下多少in
-        in_prune_dict = dict()
-        for i, layer_name in enumerate(layers_name):
-            if i == 0:
-                in_prune_dict[layer_name + '/A'] = 0
-                in_prune_dict[layer_name + '/AB'] = 0
-                in_prune_dict[layer_name + '/B'] = 0
-
-            layer_name_last = layers_name_list[i - 1]
-
-            # 输入被剪枝掉了多少!!!!
-            in_prune_dict[layer_name + '/A'] = out_prune_dict.get(layer_name_last + '/A', 0) + out_prune_dict.get(
-                layer_name_last + '/AB', 0)
-            if layer_name != 'fc8':
-                in_prune_dict[layer_name + '/AB'] = out_prune_dict.get(layer_name_last + '/AB', 0)
-            in_prune_dict[layer_name + '/B'] = out_prune_dict.get(layer_name_last + '/AB', 0) + out_prune_dict.get(
-                layer_name_last + '/B', 0)
-
         total_params, pruned_params, remain_params = 0, 0, 0
-
-        for index, layer_name in enumerate(layers_name_list):
-            num_in = num_in_channel_dict[layer_name]
-            num_out = num_out_channel_dict[layer_name]
-
-            num_out_prune = out_prune_dict.get(layer_name)
-            num_in_prune = in_prune_dict.get(layer_name)
-
-            if layers_type[index] == 'C_ib':
-                n_params = num_in * num_out * 9
-                n_remain = (num_in - num_in_prune) * (num_out - num_out_prune) * 9
-
-            elif layers_type[index] == 'F_ib':
-                n_params = num_in * num_out
-                n_remain = (num_in - num_in_prune) * (num_out - num_out_prune)
-
+        # for conv layers
+        in_channels, in_pruned = 3, 0
+        for n, n_out in enumerate([128, 128,
+                                   256, 256,
+                                   512, 512, 512,
+                                   1024, 1024, 1024,
+                                   1024, 1024, 1024]):
+            # params between this and last layers
+            n_params = in_channels * n_out * 9
             total_params += n_params
+            n_remain = (in_channels - in_pruned) * (n_out - prune_state[n]) * 9
             remain_params += n_remain
             pruned_params += n_params - n_remain
+            # for next layer
+            in_channels = n_out
+            in_pruned = prune_state[n]
+        # for fc layers
+        offset = len(prune_state) - 2
+        for n, n_out in enumerate([1024, 1024]):
+            n_params = in_channels * n_out
+            total_params += n_params
+            n_remain = (in_channels - in_pruned) * (n_out - prune_state[n + offset])
+            remain_params += n_remain
+            pruned_params += n_params - n_remain
+            # for next layer
+            in_channels = n_out
+            in_pruned = prune_state[n + offset]
+        total_params += in_channels * n_classes
+        remain_params += (in_channels - in_pruned) * n_classes
+        pruned_params += in_pruned * n_classes
 
-        # output layer
-        n_params = num_in_channel_dict['fc8/A'] * 20
-        n_remain = (num_in_channel_dict['fc8/A'] - num_in_prune) * 20
-        total_params += n_params
-        remain_params += n_remain
-
-        n_params = num_in_channel_dict['fc8/B'] * 20
-        n_remain = (num_in_channel_dict['fc8/B'] - num_in_prune) * 20
-        total_params += n_params
-        remain_params += n_remain
-
-        print('Total parameters: {}, Pruned parameters: {}, Remaining params:{}, Remain/Total params:{}'.format(
-            total_params, pruned_params, remain_params,
-            np.around(float(total_params - pruned_params) / total_params, decimals=5)))
-
-        print('Each layer pruned: {}'.format(prune_state))
-        return np.around(float(total_params - pruned_params) / total_params, decimals=5)
+        print('Total parameters: {}, Pruned parameters: {}, Remaining params:{}, Remain/Total params:{}, '
+              'Each layer pruned: {}'.format(total_params, pruned_params, remain_params,
+                                             float(total_params - pruned_params) / total_params, prune_state))
+        return float(total_params - pruned_params) / total_params
 
     def get_flops(sess, model):
         # Obtain all masks

@@ -13,7 +13,7 @@ Description.
 
 import numpy as np
 import keras.backend as K
-
+from datetime import datetime
 from scipy.special import logsumexp
 
 
@@ -89,7 +89,8 @@ def entropy_estimator_kl(x, var):
 def get_unique_probs(x):
     # 这里是为了找到unique的一行，所以首先把[batch_size, dim]压缩到[batch_size, 1]，然后再找到unique的count
     uniqueids = np.ascontiguousarray(x).view(np.dtype((np.void, x.dtype.itemsize * x.shape[1])))
-    _, unique_inverse, unique_counts = np.unique(uniqueids, return_index=False, return_inverse=True, return_counts=True)
+    # _, unique_inverse, unique_counts = np.unique(uniqueids, return_index=False, return_inverse=True, return_counts=True)
+    _, unique_counts = np.unique(uniqueids, return_index=False, return_inverse=False, return_counts=True)
     # 每一个单独的行在batch_size中占的比例
     return np.asarray(unique_counts / float(sum(unique_counts)))
 
@@ -226,20 +227,24 @@ def bin_mi(hidden, labelixs, binsize=0.5):
     :return:
     """
 
-    def get_h(d):
-        digitized = np.sign(d).astype('int')
+    def get_h_sign(d):
+        digitized = np.sign(d).astype('bool')
         # 得到的是[unique]
         p_ts = get_unique_probs(digitized)
         return -np.sum(p_ts * np.log(p_ts))
 
-    H_LAYER = get_h(hidden)
+    def get_h_bin(d):
+        digitized = np.floor(d / binsize).astype('int8')
+        p_ts = get_unique_probs(digitized)
+        return -np.sum(p_ts * np.log(p_ts))
+
+    H_LAYER = get_h_bin(hidden)
 
     sum = 0.
     for j in range(len(labelixs)):
         H_LAYER_GIVEN_OUTPUT = 0
         for label, ixs in labelixs[j].items():
-
-            H_LAYER_GIVEN_OUTPUT += ixs.mean() * get_h(hidden[ixs, :])
+            H_LAYER_GIVEN_OUTPUT += ixs.mean() * get_h_bin(hidden[ixs, :])
         sum += H_LAYER_GIVEN_OUTPUT
 
-    return 0, 1.0 / np.log(2) * H_LAYER * 20 - sum
+    return 0, H_LAYER * 20 - sum

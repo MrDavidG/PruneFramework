@@ -79,7 +79,7 @@ def kde_gpu_without_hupper(h_upper, hidden, labelixs, labelprobs, entropy_func_u
 
 def kde_in_gpu(hidden, labelixs, labelprobs, entropy_func_upper):
     h_upper = entropy_func_upper([hidden, ])[0]
-    sum = 0
+    sum = 0.
     for j in range(len(labelixs)):
         _, mi = kde_gpu_without_hupper(h_upper, hidden, labelixs[j], labelprobs[j], entropy_func_upper)
         sum += mi
