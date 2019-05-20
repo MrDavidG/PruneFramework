@@ -24,7 +24,8 @@ import pickle
 import os
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
+# gpu 0
+os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4eec6600-f5e3-f385-9b14-850ae9a2b236'
 
 def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu_decay, ib_threshold):
     """
@@ -218,7 +219,7 @@ def pruning(model_path_1, model_path_2, gamma=10, ib_threshold=0.01, regu_decay=
 if __name__ == '__main__':
     path = '/local/home/david/Remote/models/model_weights/'
 
-    pruning(model_path_1=path + 'vgg512_celeba1_0.907119_best',
-            model_path_2=path + 'vgg512_celeba2_0.892631_best',
+    pruning(model_path_1=path + 'best_vgg512_celeba1_0.907119',
+            model_path_2=path + 'best_vgg512_celeba2_0.892631',
             gamma=15,
             ib_threshold=0.01)

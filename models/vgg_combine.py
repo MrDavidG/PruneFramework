@@ -51,6 +51,10 @@ class VGG_Combined(BaseModel):
         if self.prune_method == 'info_bottle' and ib_threshold is not None:
             self.prune_threshold = ib_threshold
 
+        if self.prune_method == 'info_bottle':
+            self.kl_total_a = None
+            self.kl_total_b = None
+
         self.op_logits_a = None
         self.op_logits_b = None
 
@@ -273,7 +277,7 @@ class VGG_Combined(BaseModel):
                              is_musked=self.is_musked, regularizer_conv=regu_conv,
                              is_merge_bn=self.meta_val('is_merge_bn'))
 
-        def get_ib(y, layer_type, kl_mult):
+        def get_ib(y, layer_type, kl_mult, partition_name):
             if self.prune_method == 'info_bottle':
                 ib_layer = InformationBottleneckLayer(y, layer_type=layer_type, weight_dict=self.weight_dict,
                                                       is_training=self.is_training, kl_mult=kl_mult,
@@ -281,6 +285,15 @@ class VGG_Combined(BaseModel):
                 self.layers.append(ib_layer)
                 y, ib_kld = ib_layer.layer_output
                 self.kl_total += ib_kld
+
+                if partition_name == 'A':
+                    self.kl_total_a += ib_kld
+                if partition_name == 'AB':
+                    self.kl_total_a += ib_kld
+                    self.kl_total_b += ib_kld
+                if partition_name == 'B':
+                    self.kl_total_a += ib_kld
+
             return y
 
         self.layers.clear()
@@ -288,6 +301,8 @@ class VGG_Combined(BaseModel):
             x = self.X
 
             self.kl_total = 0.
+            self.kl_total_a = 0.
+            self.kl_total_b = 0.
 
             layer_index = 0
             # the name of the layer and the coefficient of the kl divergence
@@ -295,7 +310,7 @@ class VGG_Combined(BaseModel):
                               ('conv2_1', 1.0 / 16), ('conv2_2', 1.0 / 16), 'pooling',
                               ('conv3_1', 1.0 / 8), ('conv3_2', 1.0 / 8), ('conv3_3', 1.0 / 8), 'pooling',
                               ('conv4_1', 1.0 / 4), ('conv4_2', 1.0 / 4), ('conv4_3', 1.0 / 4), 'pooling',
-                              ('conv5_1', 2.0 / 2), ('conv5_2', 2.0 / 2), ('conv5_3', 2.0 / 2), 'pooling']:
+                              ('conv5_1', 4.0 / 2), ('conv5_2', 4.0 / 2), ('conv5_3', 4.0 / 2), 'pooling']:
                 if layer_index == 0:
                     conv_name, kl_mult = layer_set
 
@@ -306,7 +321,7 @@ class VGG_Combined(BaseModel):
                             self.layers.append(conv)
                             y_A = tf.nn.relu(conv.layer_output)
 
-                            y_A = get_ib(y_A, 'C_ib', kl_mult)
+                            y_A = get_ib(y_A, 'C_ib', kl_mult, 'A')
 
                     if get_signal(layer_index, 'AB'):
                         with tf.variable_scope(conv_name + '/AB'):
@@ -314,7 +329,7 @@ class VGG_Combined(BaseModel):
                             self.layers.append(conv)
                             y_AB = tf.nn.relu(conv.layer_output)
 
-                            y_AB = get_ib(y_AB, 'C_ib', kl_mult)
+                            y_AB = get_ib(y_AB, 'C_ib', kl_mult, 'AB')
 
                     if get_signal(layer_index, 'B'):
                         with tf.variable_scope(conv_name + '/B'):
@@ -322,7 +337,7 @@ class VGG_Combined(BaseModel):
                             self.layers.append(conv)
                             y_B = tf.nn.relu(conv.layer_output)
 
-                            y_B = get_ib(y_B, 'C_ib', kl_mult)
+                            y_B = get_ib(y_B, 'C_ib', kl_mult, 'B')
 
                 elif layer_set != 'pooling':
                     conv_name, kl_mult = layer_set
@@ -343,7 +358,7 @@ class VGG_Combined(BaseModel):
                             self.layers.append(conv)
                             y_A = tf.nn.relu(conv.layer_output)
 
-                            y_A = get_ib(y_A, 'C_ib', kl_mult)
+                            y_A = get_ib(y_A, 'C_ib', kl_mult, 'A')
 
                     # AB
                     if get_signal(layer_index, 'AB'):
@@ -356,7 +371,7 @@ class VGG_Combined(BaseModel):
 
                                 y_AB = tf.nn.relu(conv_AB.layer_output)
 
-                                y_AB = get_ib(y_AB, 'C_ib', kl_mult)
+                                y_AB = get_ib(y_AB, 'C_ib', kl_mult, 'AB')
 
                     # B
                     if get_signal(layer_index, 'B'):
@@ -373,17 +388,16 @@ class VGG_Combined(BaseModel):
                             self.layers.append(conv)
                             y_B = tf.nn.relu(conv.layer_output)
 
-                            y_B = get_ib(y_B, 'C_ib', kl_mult)
+                            y_B = get_ib(y_B, 'C_ib', kl_mult, 'B')
 
                 elif layer_set == 'pooling':
                     # 因为在上一层已经出现了layer_index+=1,所以应该查看上一层是否出现了A,AB,B
-                    if get_signal(layer_index-1, 'A'):
+                    if get_signal(layer_index - 1, 'A'):
                         y_A = tf.nn.max_pool(y_A_last, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
-                    if get_signal(layer_index-1, 'AB'):
+                    if get_signal(layer_index - 1, 'AB'):
                         y_AB = tf.nn.max_pool(y_AB_last, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
-                    if get_signal(layer_index-1, 'B'):
+                    if get_signal(layer_index - 1, 'B'):
                         y_B = tf.nn.max_pool(y_B_last, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
-
 
                 # 如果是pooling的时候layer_index指向下一层，所以需要变成判断上一层是不是有A，AB，B
                 y_A_last = None
@@ -391,11 +405,11 @@ class VGG_Combined(BaseModel):
                 y_B_last = None
                 if layer_set == 'pooling':
                     # Record the output of this layer
-                    if get_signal(layer_index-1, 'A'):
+                    if get_signal(layer_index - 1, 'A'):
                         y_A_last = y_A
-                    if get_signal(layer_index-1, 'AB'):
+                    if get_signal(layer_index - 1, 'AB'):
                         y_AB_last = y_AB
-                    if get_signal(layer_index-1, 'B'):
+                    if get_signal(layer_index - 1, 'B'):
                         y_B_last = y_B
                 else:
                     # 如果是正常层的话，layer_index对应，所以可以正常判断
@@ -412,11 +426,11 @@ class VGG_Combined(BaseModel):
 
             # From conv to fc layer
             # 到这一层的时候layer_index刚刚经过pooling，所以指向的是fc层的状态，这里面应该是判断上一层
-            if get_signal(layer_index-1, 'A'):
+            if get_signal(layer_index - 1, 'A'):
                 y_A_last = tf.contrib.layers.flatten(y_A_last)
-            if get_signal(layer_index-1, 'AB'):
+            if get_signal(layer_index - 1, 'AB'):
                 y_AB_last = tf.contrib.layers.flatten(y_AB_last)
-            if get_signal(layer_index-1, 'B'):
+            if get_signal(layer_index - 1, 'B'):
                 y_B_last = tf.contrib.layers.flatten(y_B_last)
 
             for fc_name in ['fc6', 'fc7']:
@@ -436,7 +450,7 @@ class VGG_Combined(BaseModel):
                         self.layers.append(fc_layer)
                         y_A = tf.nn.relu(fc_layer.layer_output)
 
-                        y_A = get_ib(y_A, 'F_ib', self.gamma)
+                        y_A = get_ib(y_A, 'F_ib', self.gamma, 'A')
 
                 # AB
                 if get_signal(layer_index, 'AB'):
@@ -449,7 +463,7 @@ class VGG_Combined(BaseModel):
 
                             y_AB = tf.nn.relu(fc_layer_AB.layer_output)
 
-                            y_AB = get_ib(y_AB, 'F_ib', self.gamma)
+                            y_AB = get_ib(y_AB, 'F_ib', self.gamma, 'AB')
 
                 # B
                 if get_signal(layer_index, 'B'):
@@ -466,7 +480,7 @@ class VGG_Combined(BaseModel):
                         self.layers.append(fc_layer)
                         y_B = tf.nn.relu(fc_layer.layer_output)
 
-                        y_B = get_ib(y_B, 'F_ib', self.gamma)
+                        y_B = get_ib(y_B, 'F_ib', self.gamma, 'B')
 
                 # Record the output of last layer
                 if get_signal(layer_index, 'A'):
@@ -520,33 +534,12 @@ class VGG_Combined(BaseModel):
         # for the pruning method
         if self.prune_method == 'info_bottle':
             self.op_loss = mae_loss + l2_loss + self.kl_factor * self.kl_total
-            self.op_loss_a = mae_loss_a + l2_loss + self.kl_factor * self.kl_total
-            self.op_loss_b = mae_loss_b + l2_loss + self.kl_factor * self.kl_total
+            self.op_loss_a = mae_loss_a + l2_loss + self.kl_factor * self.kl_total_a
+            self.op_loss_b = mae_loss_b + l2_loss + self.kl_factor * self.kl_total_b
         else:
             self.op_loss = mae_loss + l2_loss
             self.op_loss_a = mae_loss_a + l2_loss
             self.op_loss_b = mae_loss_b + l2_loss
-
-    def get_params(self):
-        param_AB_list = list()
-        param_A_list = list()
-        param_B_list = list()
-        layer_name_list = ['conv1_1', 'conv1_2',
-                           'conv2_1', 'conv2_2',
-                           'conv3_1', 'conv3_2', 'conv3_3',
-                           'conv4_1', 'conv4_2', 'conv4_3',
-                           'conv5_1', 'conv5_2', 'conv5_3',
-                           'fc6', 'fc7', 'fc8']
-        for layer in self.layers:
-            if layer.layer_name in [name + '/A' for name in layer_name_list]:
-                param_A_list += layer.weight_tensors
-            elif layer.layer_name in [name + '/B' for name in layer_name_list]:
-                param_B_list += layer.weight_tensors
-            elif layer.layer_name.endswith('/AB') or layer.layer_name.endswith('/AB/A') or layer.layer_name.endswith(
-                    '/AB/AB') or layer.layer_name.endswith('/AB/B'):
-                param_AB_list += layer.weight_tensors
-
-        return param_A_list, param_AB_list, param_B_list
 
     def optimize(self):
         # 为了让bn中的\miu, \delta滑动平均
@@ -559,15 +552,9 @@ class VGG_Combined(BaseModel):
 
                 self.op_opt = self.opt.minimize(self.op_loss)
 
-                # grads_and_vars is a list of tuples
-                params_A, params_AB, params_B = self.get_params()
+                self.op_opt_a = self.opt.minimize(self.op_loss_a)
 
-                grads_vars_a = self.opt.compute_gradients(self.op_loss, params_A + params_AB)
-                grads_vars_b = self.opt.compute_gradients(self.op_loss, params_AB + params_B)
-
-                # Ask the optimizer to apply the capped gradients
-                self.op_opt_a = self.opt.apply_gradients(grads_vars_a)
-                self.op_opt_b = self.opt.apply_gradients(grads_vars_b)
+                self.op_opt_b = self.opt.minimize(self.op_loss_b)
 
     def evaluate(self):
         dim_label_single = tf.cast(tf.shape(self.Y)[1] / 2, tf.int32)
@@ -842,9 +829,9 @@ class VGG_Combined(BaseModel):
                 num_in_channel_dict[layer_name + '/AB'] = 3
                 num_in_channel_dict[layer_name + '/B'] = 3
             else:
-                num_A_last = len(cluster_res_list[layer_index-1]['A'])
-                num_AB_last = len(cluster_res_list[layer_index-1]['AB'])
-                num_B_last = len(cluster_res_list[layer_index-1]['B'])
+                num_A_last = len(cluster_res_list[layer_index - 1]['A'])
+                num_AB_last = len(cluster_res_list[layer_index - 1]['AB'])
+                num_B_last = len(cluster_res_list[layer_index - 1]['B'])
 
                 num_in_channel_dict[layer_name + '/A'] = num_A_last + num_AB_last
                 num_in_channel_dict[layer_name + '/AB'] = num_AB_last
@@ -942,19 +929,19 @@ class VGG_Combined(BaseModel):
             total_params, pruned_params, remain_params,
             np.around(float(total_params - pruned_params) / total_params, decimals=5))
 
-        res_each_layer = dict()
+        res_each_layer = list()
         for i in range(len(prune_state)):
-            res_each_layer[prune_state[i]] = original_state[i]
+            res_each_layer += [str(prune_state[i]) + '/' + str(original_state[i])]
 
-        str_2 = 'Each layer pruned: ' + str(res_each_layer).replace(': ', '/')
+        str_2 = 'Each layer pruned: {}'.format(res_each_layer).replace("'", "")
 
         str_3 = 'Total FLOPs: {}, Pruned FLOPs: {}, Remaining FLOPs: {}, Remain/Total FLOPs:{}'.format(total_flops,
-                                                                                                            pruned_flops,
-                                                                                                            remain_flops,
-                                                                                                            np.around(
-                                                                                                                float(
-                                                                                                                    total_flops - pruned_flops) / total_flops,
-                                                                                                                decimals=5))
+                                                                                                       pruned_flops,
+                                                                                                       remain_flops,
+                                                                                                       np.around(
+                                                                                                           float(
+                                                                                                               total_flops - pruned_flops) / total_flops,
+                                                                                                           decimals=5))
         print(str_1)
         print(str_2)
         print(str_3)

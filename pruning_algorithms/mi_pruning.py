@@ -209,8 +209,8 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     print('[%s] Rebuild VGG model on task %s' % (datetime.now(), task_name))
 
     tf.reset_default_graph()
-    # session = tf.Session(config=gpu_config)
-    session = tf.InteractiveSession(config=gpu_config)
+    session = tf.Session(config=gpu_config)
+    # session = tf.InteractiveSession(config=gpu_config)
 
     # Set training params
     training = tf.placeholder(dtype=tf.bool, name='training')
@@ -229,7 +229,7 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     session.run(tf.global_variables_initializer())
 
     # 建立Graph
-    train_writer = tf.summary.FileWriter('/local/home/david/Remote/log/train/', session.graph)
+    # train_writer = tf.summary.FileWriter('/local/home/david/Remote/log/train/', session.graph)
 
     session.run(model.test_init)
     model.eval_once(session, model.test_init, -1)
