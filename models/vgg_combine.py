@@ -587,9 +587,6 @@ class VGG_Combined(BaseModel):
         sess.run(init)
         total_loss = 0
         total_kl = 0
-        total_correct_preds = 0
-        total_correct_preds_a = 0
-        total_correct_preds_b = 0
         n_batches = 0
 
         if task_name == 'A':
@@ -604,31 +601,20 @@ class VGG_Combined(BaseModel):
         try:
             while True:
                 if self.prune_method == 'info_bottle':
-                    _, loss, accu_batch, accu_batch_a, accu_batch_b, kl = sess.run(
-                        [op_opt, self.op_loss, self.op_accuracy, self.op_accuracy_a, self.op_accuracy_b,
-                         self.kl_total],
-                        feed_dict={self.is_training: True})
+                    _, loss, kl = sess.run([op_opt, self.op_loss, self.kl_total], feed_dict={self.is_training: True})
                     total_kl += kl
                 else:
-                    _, loss, accu_batch, accu_batch_a, accu_batch_b = sess.run(
-                        [op_opt, self.op_loss, self.op_accuracy, self.op_accuracy_a, self.op_accuracy_b],
-                        feed_dict={self.is_training: True})
+                    _, loss = sess.run([op_opt, self.op_loss], feed_dict={self.is_training: True})
                 step += 1
                 total_loss += loss
-                total_correct_preds += accu_batch
-                total_correct_preds_a += accu_batch_a
-                total_correct_preds_b += accu_batch_b
                 n_batches += 1
 
                 if n_batches % 5 == 0:
-                    str_ = 'epoch={:d}, batch={:d}/{:d}, curr_loss={:f}, train_acc={:%} | a={:%} | b={:%},  train_kl={:f}, used_time:{:.2f}s'.format(
+                    str_ = 'epoch={:d}, batch={:d}/{:d}, curr_loss={:f}, train_kl={:f}, used_time:{:.2f}s'.format(
                         epoch + 1,
                         n_batches,
                         self.total_batches_train,
                         total_loss / n_batches,
-                        total_correct_preds / (n_batches * self.config.batch_size),
-                        total_correct_preds_a / (n_batches * self.config.batch_size),
-                        total_correct_preds_b / (n_batches * self.config.batch_size),
                         total_kl / n_batches,
                         time.time() - time_last)
                     print('\r' + str_, end=' ')
@@ -707,6 +693,57 @@ class VGG_Combined(BaseModel):
 
         return accu, accu_a, accu_b
 
+    def train_one_epoch_individual(self, sess, init, epoch, step, time_stamp):
+        sess.run(init)
+        total_loss_a = 0
+        total_loss_b = 0
+        total_kl_a = 0
+        total_kl_b = 0
+        n_batches = 0
+
+        time_last = time.time()
+
+        try:
+            while True:
+                if self.prune_method == 'info_bottle':
+                    _, loss_a, kl_a = sess.run([self.op_opt_a, self.op_loss_a, self.kl_total_a],
+                                               feed_dict={self.is_training: True})
+                    total_kl_a += kl_a
+                    _, loss_b, kl_b = sess.run([self.op_opt_b, self.op_loss_b, self.kl_total_b],
+                                               feed_dict={self.is_training: True})
+                    total_kl_b += kl_b
+
+                else:
+                    _, loss_a = sess.run([self.op_opt_a, self.op_loss_a], feed_dict={self.is_training: True})
+                    _, loss_b = sess.run([self.op_opt_b, self.op_loss_b], feed_dict={self.is_training: True})
+                step += 2
+                total_loss_a += loss_a
+                total_loss_b += loss_b
+                n_batches += 2
+
+                if n_batches % 10 == 0:
+                    str_ = 'epoch={:d}, batch={:d}/{:d}, curr_loss_a={:f}, curr_loss_b={:f}, train_kl_a={:f}, train_kl_b={:f}, used_time:{:.2f}s'.format(
+                        epoch + 1,
+                        n_batches,
+                        self.total_batches_train,
+                        total_loss_a / n_batches * 2,
+                        total_loss_b / n_batches * 2,
+                        total_kl_a / n_batches * 2,
+                        total_kl_b / n_batches * 2,
+                        time.time() - time_last)
+                    print('\r' + str_, end=' ')
+
+                    time_last = time.time()
+
+        except tf.errors.OutOfRangeError:
+            pass
+
+        # 写文件
+        with open('/local/home/david/Remote/models/model_weights/log_vgg_combine_' + time_stamp, 'a+') as f:
+            f.write(str_ + '\n')
+
+        return step
+
     def train_individual(self, sess, n_epochs, lr, time_stamp):
         if lr is not None:
             self.config.learning_rate = lr
@@ -715,11 +752,7 @@ class VGG_Combined(BaseModel):
         sess.run(tf.variables_initializer(self.opt.variables()))
         step = self.global_step_tensor.eval(session=sess)
         for epoch in range(n_epochs):
-            if epoch % 2 == 0:
-                step = self.train_one_epoch(sess, self.train_init, epoch, step, 'A', time_stamp)
-            else:
-                step = self.train_one_epoch(sess, self.train_init, epoch, step, 'B', time_stamp)
-
+            step = self.train_one_epoch_individual(sess, self.train_init, epoch, step, time_stamp)
             accu, accu_a, accu_b = self.eval_once(sess, self.test_init, epoch, time_stamp)
 
             if self.prune_method == 'info_bottle':
