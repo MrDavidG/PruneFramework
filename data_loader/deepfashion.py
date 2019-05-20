@@ -57,7 +57,13 @@ def order_is_right():
     path_labels = '/local/home/david/Downloads/DeepFashion/list_attr_img_20.txt'
     path_ori_partition = '/local/home/david/Downloads/DeepFashion/list_eval_partition.txt'
     labels = pd.read_csv(path_labels, delim_whitespace=True, header=None)
-    partition = pd.read_csv(path_ori_partition, delim_whitespace=True, header=None)
+    partition = pd.read_csv(path_ori_partition, delim_whitespace=True, header=1)
+
+    assert(labels.values.shape[0], partition.values.shape[0])
+
+    for i in range(labels.values.shape[0]):
+        if labels.values[i, 0] != partition.values[i, 0]:
+            print('两个的order不一样！！！！')
 
     print('haha')
 

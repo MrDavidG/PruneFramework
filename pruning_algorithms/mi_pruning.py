@@ -220,8 +220,8 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     # Rebuild model
     model = VGG_Combined(config, task_name, weight_a, weight_b, cluster_res_list, signal_list, musk=False, gamma=gamma,
                          ib_threshold=ib_threshold,
-                         model_path=None)
-    # model_path='/local/home/david/Remote/models/model_weights/vgg512_combine_ib_celeba_0.01_0.8806-0.8876-0.8735_cr-0.3973_epoch-30_1e-5')
+                         # model_path=None)
+                         model_path='/local/home/david/Remote/models/model_weights/vgg512_combine_ib_celeba_0.01_0.8823-0.8892-0.8754_cr-0.023_epoch-30_1e-5_0521')
     model.set_global_tensor(training, regularizer_zero, regularizer_decay, regularizer_zero)
     model.build()
 
@@ -239,16 +239,16 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     # Test
     model.get_CR(session, cluster_res_list, time_stamp)
 
-    print('————————————————————kl_factor=1e-5, 训练30个epoch————————————————————')
-    model.train(sess=session, n_epochs=30, task_name='AB', lr=0.01, time_stamp=time_stamp)
-    print('————————————————————改变为1e-6之后, 重新训练10个epoch————————————————————')
-    model.kl_factor = 1e-6
-    model.loss()
-    model.optimize()
-    model.evaluate()
-    model.eval_once(session, model.test_init, -1, time_stamp=time_stamp)
-    model.train(sess=session, n_epochs=10, task_name='AB', lr=0.01, time_stamp=time_stamp)
-    print('————————————————————交替训练任务A和任务B各5次————————————————————')
+    # print('————————————————————kl_factor=1e-5, 训练30个epoch————————————————————')
+    # model.train(sess=session, n_epochs=30, task_name='AB', lr=0.01, time_stamp=time_stamp)
+    # print('————————————————————改变为1e-6之后, 重新训练10个epoch————————————————————')
+    # model.kl_factor = 1e-6
+    # model.loss()
+    # model.optimize()
+    # model.evaluate()
+    # model.eval_once(session, model.test_init, -1, time_stamp=time_stamp)
+    # model.train(sess=session, n_epochs=10, task_name='AB', lr=0.01, time_stamp=time_stamp)
+    print('————————————————————交替训练任务A和任务B共10次————————————————————')
     model.train_individual(sess=session, n_epochs=10, lr=0.01, time_stamp=time_stamp)
 
 

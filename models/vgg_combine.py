@@ -310,7 +310,7 @@ class VGG_Combined(BaseModel):
                               ('conv2_1', 1.0 / 16), ('conv2_2', 1.0 / 16), 'pooling',
                               ('conv3_1', 1.0 / 8), ('conv3_2', 1.0 / 8), ('conv3_3', 1.0 / 8), 'pooling',
                               ('conv4_1', 1.0 / 4), ('conv4_2', 1.0 / 4), ('conv4_3', 1.0 / 4), 'pooling',
-                              ('conv5_1', 4.0 / 2), ('conv5_2', 4.0 / 2), ('conv5_3', 4.0 / 2), 'pooling']:
+                              ('conv5_1', 3.0 / 2), ('conv5_2', 3.0 / 2), ('conv5_3', 3.0 / 2), 'pooling']:
                 if layer_index == 0:
                     conv_name, kl_mult = layer_set
 
@@ -700,6 +700,10 @@ class VGG_Combined(BaseModel):
         total_kl_a = 0
         total_kl_b = 0
         n_batches = 0
+
+        # 写文件
+        with open('/local/home/david/Remote/models/model_weights/log_vgg_combine_' + time_stamp, 'a+') as f:
+            f.write('' + '\n')
 
         time_last = time.time()
 
