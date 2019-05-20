@@ -64,7 +64,10 @@ class VGGNet(BaseModel):
             self.initial_weight = True
 
         if self.prune_method == 'info_bottle' and 'conv1_1/info_bottle/mu' not in self.weight_dict.keys():
+            print('初始ib层权重')
             self.weight_dict = dict(self.weight_dict, **self.construct_initial_weights_ib())
+        else:
+            print('!!!!!!!!未初始化ib权重，model_path中自带或未启动ib pruning!!!!!!!!')
 
     def construct_initial_weights(self, model_path='/local/home/david/Remote/datasets/vgg_imdb_pretrain_2'):
         def bias_variable(shape):
@@ -311,9 +314,9 @@ class VGGNet(BaseModel):
         time_end = time.time()
         accu = total_correct_preds / self.n_samples_val
         str_ = 'Epoch:{:d}, val_acc={:%}, val_loss={:f}, used_time:{:.2f}s'.format(epoch + 1,
-                                                                                     accu,
-                                                                                     total_loss / n_batches,
-                                                                                     time_end - time_start)
+                                                                                   accu,
+                                                                                   total_loss / n_batches,
+                                                                                   time_end - time_start)
         print('\n' + str_)
 
         # 写文件
@@ -321,18 +324,14 @@ class VGGNet(BaseModel):
             with open(
                     '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_ib_' + time_stamp,
                     'a+') as f:
-                f.write(str_)
+                f.write(str_ + '\n')
 
         return accu
 
-    def train(self, sess, n_epochs, lr=None):
+    def train(self, sess, n_epochs, lr, time_stamp):
         if lr is not None:
             self.config.learning_rate = lr
             self.optimize()
-
-        count_86 = 3
-
-        time_stamp = str(datetime.now())
 
         sess.run(tf.variables_initializer(self.opt.variables()))
         step = self.global_step_tensor.eval(session=sess)
@@ -341,13 +340,9 @@ class VGGNet(BaseModel):
             accu = self.eval_once(sess, self.test_init, epoch, time_stamp)
 
             if self.prune_method == 'info_bottle':
-                cr = self.get_CR(sess)
-                with open(
-                        '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_ib_' + time_stamp,
-                        'a+') as f:
-                    f.write(' cr: ' + str(cr) + '\n')
+                cr = self.get_CR(sess, time_stamp)
 
-            if (epoch + 1) % 10 == 0 or (accu >= 0.88 and cr < 0.8):
+            if (epoch + 1) % 10 == 0:
                 if self.prune_method == 'info_bottle':
                     save_path = '/local/home/david/Remote/models/model_weights/vgg512_ib_' + self.task_name + '_' + str(
                         self.prune_threshold) + '_' + str(
@@ -356,11 +351,6 @@ class VGGNet(BaseModel):
                     save_path = '/local/home/david/Remote/models/model_weights/vgg512_' + self.task_name + '_' + str(
                         np.around(accu, decimals=6))
                 self.save_weight(sess, save_path)
-
-            if accu < 0.873:
-                count_86 -= 1
-                if count_86 <= 0:
-                    break
 
     def test(self, sess):
         sess.run(self.test_init)
@@ -382,7 +372,13 @@ class VGGNet(BaseModel):
             '\nTesting {}, val_acc={:%}, val_loss={:f}'.format(self.task_name, total_correct_preds / self.n_samples_val,
                                                                total_loss / n_batches))
 
-    def get_CR(self, sess):
+    def get_CR(self, sess, time_stamp=None):
+        name_len_dict = [72, 72,
+                         36, 36,
+                         18, 18, 18,
+                         9, 9, 9,
+                         4, 4, 4]
+
         # Obtain all masks
         masks = list()
         for layer in self.layers:
@@ -396,6 +392,8 @@ class VGGNet(BaseModel):
         prune_state = [np.sum(mask == 0) for mask in masks]
 
         total_params, pruned_params, remain_params = 0, 0, 0
+        total_flops, pruned_flops, remain_flops = 0, 0, 0
+
         # for conv layers
         in_channels, in_pruned = 3, 0
         for n, n_out in enumerate([64, 64,
@@ -403,33 +401,56 @@ class VGGNet(BaseModel):
                                    256, 256, 256,
                                    512, 512, 512,
                                    512, 512, 512]):
-            # params between this and last layers
-            n_params = in_channels * n_out * 9
-            total_params += n_params
-            n_remain = (in_channels - in_pruned) * (n_out - prune_state[n]) * 9
-            remain_params += n_remain
-            pruned_params += n_params - n_remain
-            # for next layer
+
+            if n < 13:
+                # Conv
+                total_params += in_channels * n_out * 9
+                remain_params += (in_channels - in_pruned) * (n_out - prune_state[n]) * 9
+
+                M = name_len_dict[n]
+                total_flops += 2 * (9 * in_channels + 1) * M * M * n_out
+                remain_flops += 2 * (9 * (in_channels - in_pruned) + 1) * M * M * (n_out - prune_state[n])
+            else:
+                # Fc
+                total_params += in_channels * n_out
+                remain_params += (in_channels - in_pruned) * (n_out - prune_state[n])
+
+                total_flops += (2 * in_channels - 1) * n_out
+                remain_flops += (2 * (in_channels - in_pruned) - 1) * (n_out - prune_state[n])
+
+            # For next layer
             in_channels = n_out
             in_pruned = prune_state[n]
-        # for fc layers
-        offset = len(prune_state) - 2
-        for n, n_out in enumerate([512, 512]):
-            n_params = in_channels * n_out
-            total_params += n_params
-            n_remain = (in_channels - in_pruned) * (n_out - prune_state[n + offset])
-            remain_params += n_remain
-            pruned_params += n_params - n_remain
-            # for next layer
-            in_channels = n_out
-            in_pruned = prune_state[n + offset]
+
+        # Output layer
         total_params += in_channels * n_classes
         remain_params += (in_channels - in_pruned) * n_classes
-        pruned_params += in_pruned * n_classes
+        pruned_params = total_params - remain_params
 
-        print('Total parameters: {}, Pruned parameters: {}, Remaining params:{}, Remain/Total params:{}, '
-              'Each layer pruned: {}'.format(total_params, pruned_params, remain_params,
-                                             float(total_params - pruned_params) / total_params, prune_state))
+        total_flops += (2 * in_channels - 1) * n_classes
+        remain_flops += (2 * (in_channels - in_pruned) - 1) * n_classes
+        pruned_flops = total_flops - remain_flops
+
+        str_1 = 'Total parameters: {}, Pruned parameters: {}, Remaining params:{}, Remain/Total params:{}, Each layer pruned: {}'.format(
+            total_params, pruned_params, remain_params, float(total_params - pruned_params) / total_params, prune_state)
+
+        str_2 = 'Total FLOPs: {}, Pruned FLOPs: {}, Remaining FLOPs: {}, Remain/Total FLOPs:{}'.format(total_flops,
+                                                                                                       pruned_flops,
+                                                                                                       remain_flops,
+                                                                                                       np.around(float(
+                                                                                                           remain_flops) / total_flops,
+                                                                                                                 decimals=5))
+
+        print(str_1)
+        print(str_2)
+
+        if time_stamp is not None:
+            with open(
+                    '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_ib_' + time_stamp,
+                    'a+') as f:
+                f.write(str_1 + '\n')
+                f.write(str_2 + '\n')
+
         return float(total_params - pruned_params) / total_params
 
 
@@ -441,7 +462,7 @@ if __name__ == '__main__':
     gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True
 
-    for task_name in ['celeba2']:
+    for task_name in ['celeba']:
         print('Training on task {:s}'.format(task_name))
         tf.reset_default_graph()
         # session for training
@@ -455,21 +476,25 @@ if __name__ == '__main__':
 
         # Train
         model = VGGNet(config, task_name, musk=False, gamma=15,
-                       model_path='/local/home/david/Remote/models/model_weights/vgg512_celeba2_0.892631_best')
+                       model_path='/local/home/david/Remote/models/model_weights/vgg512_celeba_0.89747_best')
+        # model_path='/local/home/david/Remote/models/model_weights/vgg512_celeba2_0.892631_best')
         model.set_global_tensor(training, regularizer_conv, regularizer_fc)
         model.build()
 
         session.run(tf.global_variables_initializer())
         model.eval_once(session, model.test_init, -1, None)
 
-        # model.train(sess=session, n_epochs=40, lr=0.01)
+        time_stamp = str(datetime.now())
 
-        model.train(sess=session, n_epochs=10, lr=0.01)
-        model.kl_factor = 8e-6
+        # 先是1e-5进行30个epoch，然后变成1e-6来进行30个epoch
+        model.train(sess=session, n_epochs=30, lr=0.01, time_stamp=time_stamp)
+        print('————————————————————改变为1e-6之后, 重新训练10个epoch————————————————————')
+        model.kl_factor = 1e-6
         model.loss()
         model.optimize()
         model.evaluate()
-        model.train(sess=session, n_epochs=100, lr=0.01)
+        model.eval_once(session, model.test_init, -1, None)
+        model.train(sess=session, n_epochs=20, lr=0.01, time_stamp=time_stamp)
 
         # model.train(sess=session, n_epochs=30, lr=0.0001)
 

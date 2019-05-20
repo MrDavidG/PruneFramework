@@ -14,7 +14,7 @@ import sys
 
 sys.path.append(r"/local/home/david/Remote/")
 
-from models.vgg_full_connect import VGG_Combined
+from models.vgg_combine import VGG_Combined
 from utils.config import process_config
 from datetime import datetime
 
@@ -22,7 +22,6 @@ import tensorflow as tf
 import numpy as np
 import pickle
 import os
-
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -63,11 +62,18 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     # Train
     session.run(tf.global_variables_initializer())
 
-    model.eval_once(session, model.test_init, -1, None)
+    model.eval_once(session, model.test_init, -1)
 
-    # model.train(sess=session, n_epochs=20, task_name='AB', lr=0.01)
-    model.train(sess=session, n_epochs=80, task_name='AB', lr=0.01)
-    # model.train(sess=session, n_epochs=30, task_name='AB', lr=0.0001)
+    time_stamp = str(datetime.now())
+    model.get_CR(session, cluster_res_list, time_stamp)
+    model.train(sess=session, n_epochs=30, task_name='AB', lr=0.01, time_stamp=time_stamp)
+    print('————————————————————改变为1e-6之后, 重新训练30个epoch————————————————————')
+    model.kl_factor = 1e-6
+    model.loss()
+    model.optimize()
+    model.evaluate()
+    model.eval_once(session, model.test_init, -1, time_stamp)
+    model.train(sess=session, n_epochs=20, task_name='AB', lr=0.01, time_stamp=time_stamp)
 
 
 def get_connection_signal(cluster_res_list, dim_list):

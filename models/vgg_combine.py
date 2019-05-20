@@ -82,6 +82,7 @@ class VGG_Combined(BaseModel):
             self.initial_weight = True
 
         if self.prune_method == 'info_bottle' and 'conv1_1/AB/info_bottle/mu' not in self.weight_dict.keys():
+            print('-----------------------初始化ib层权重-----------------------')
             self.weight_dict = dict(self.weight_dict, **self.construct_initial_weights_ib(cluster_res_list))
 
     def construct_initial_weights(self, weight_dict_a, weight_dict_b, cluster_res_list):
@@ -294,7 +295,7 @@ class VGG_Combined(BaseModel):
                               ('conv2_1', 1.0 / 16), ('conv2_2', 1.0 / 16), 'pooling',
                               ('conv3_1', 1.0 / 8), ('conv3_2', 1.0 / 8), ('conv3_3', 1.0 / 8), 'pooling',
                               ('conv4_1', 1.0 / 4), ('conv4_2', 1.0 / 4), ('conv4_3', 1.0 / 4), 'pooling',
-                              ('conv5_1', 1.0 / 2), ('conv5_2', 1.0 / 2), ('conv5_3', 1.0 / 2), 'pooling']:
+                              ('conv5_1', 2.0 / 2), ('conv5_2', 2.0 / 2), ('conv5_3', 2.0 / 2), 'pooling']:
                 if layer_index == 0:
                     conv_name, kl_mult = layer_set
 
@@ -368,37 +369,54 @@ class VGG_Combined(BaseModel):
                                 conv = get_conv(y_AB_last, self.regularizer_conv)
                             elif get_signal(layer_index, 'fromB'):
                                 # Only B to B
-                                conv = get_conv(y_A_last, self.regularizer_conv)
+                                conv = get_conv(y_B_last, self.regularizer_conv)
                             self.layers.append(conv)
                             y_B = tf.nn.relu(conv.layer_output)
 
                             y_B = get_ib(y_B, 'C_ib', kl_mult)
 
                 elif layer_set == 'pooling':
-                    if get_signal(layer_index, 'A'):
+                    # 因为在上一层已经出现了layer_index+=1,所以应该查看上一层是否出现了A,AB,B
+                    if get_signal(layer_index-1, 'A'):
                         y_A = tf.nn.max_pool(y_A_last, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
-                    if get_signal(layer_index, 'AB'):
+                    if get_signal(layer_index-1, 'AB'):
                         y_AB = tf.nn.max_pool(y_AB_last, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
-                    if get_signal(layer_index, 'B'):
+                    if get_signal(layer_index-1, 'B'):
                         y_B = tf.nn.max_pool(y_B_last, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
 
-                # Record the output of this layer
-                if get_signal(layer_index, 'A'):
-                    y_A_last = y_A
-                if get_signal(layer_index, 'AB'):
-                    y_AB_last = y_AB
-                if get_signal(layer_index, 'B'):
-                    y_B_last = y_B
+
+                # 如果是pooling的时候layer_index指向下一层，所以需要变成判断上一层是不是有A，AB，B
+                y_A_last = None
+                y_AB_last = None
+                y_B_last = None
+                if layer_set == 'pooling':
+                    # Record the output of this layer
+                    if get_signal(layer_index-1, 'A'):
+                        y_A_last = y_A
+                    if get_signal(layer_index-1, 'AB'):
+                        y_AB_last = y_AB
+                    if get_signal(layer_index-1, 'B'):
+                        y_B_last = y_B
+                else:
+                    # 如果是正常层的话，layer_index对应，所以可以正常判断
+                    # Record the output of this layer
+                    if get_signal(layer_index, 'A'):
+                        y_A_last = y_A
+                    if get_signal(layer_index, 'AB'):
+                        y_AB_last = y_AB
+                    if get_signal(layer_index, 'B'):
+                        y_B_last = y_B
 
                 if layer_set != 'pooling':
                     layer_index += 1
 
             # From conv to fc layer
-            if get_signal(layer_index, 'A'):
+            # 到这一层的时候layer_index刚刚经过pooling，所以指向的是fc层的状态，这里面应该是判断上一层
+            if get_signal(layer_index-1, 'A'):
                 y_A_last = tf.contrib.layers.flatten(y_A_last)
-            if get_signal(layer_index, 'AB'):
+            if get_signal(layer_index-1, 'AB'):
                 y_AB_last = tf.contrib.layers.flatten(y_AB_last)
-            if get_signal(layer_index, 'B'):
+            if get_signal(layer_index-1, 'B'):
                 y_B_last = tf.contrib.layers.flatten(y_B_last)
 
             for fc_name in ['fc6', 'fc7']:
@@ -542,14 +560,14 @@ class VGG_Combined(BaseModel):
                 self.op_opt = self.opt.minimize(self.op_loss)
 
                 # grads_and_vars is a list of tuples
-                # params_A, params_AB, params_B = self.get_params()
-                #
-                # grads_vars_a = self.opt.compute_gradients(self.op_loss, params_A + params_AB)
-                # grads_vars_b = self.opt.compute_gradients(self.op_loss, params_AB + params_B)
-                #
-                # # Ask the optimizer to apply the capped gradients
-                # self.op_opt_a = self.opt.apply_gradients(grads_vars_a)
-                # self.op_opt_b = self.opt.apply_gradients(grads_vars_b)
+                params_A, params_AB, params_B = self.get_params()
+
+                grads_vars_a = self.opt.compute_gradients(self.op_loss, params_A + params_AB)
+                grads_vars_b = self.opt.compute_gradients(self.op_loss, params_AB + params_B)
+
+                # Ask the optimizer to apply the capped gradients
+                self.op_opt_a = self.opt.apply_gradients(grads_vars_a)
+                self.op_opt_b = self.opt.apply_gradients(grads_vars_b)
 
     def evaluate(self):
         dim_label_single = tf.cast(tf.shape(self.Y)[1] / 2, tf.int32)
@@ -587,12 +605,12 @@ class VGG_Combined(BaseModel):
         total_correct_preds_b = 0
         n_batches = 0
 
-        # if task_name == 'A':
-        #     op_opt = self.op_opt_a
-        # elif task_name == 'B':
-        #     op_opt = self.op_opt_b
-        # else:
-        op_opt = self.op_opt
+        if task_name == 'A':
+            op_opt = self.op_opt_a
+        elif task_name == 'B':
+            op_opt = self.op_opt_b
+        else:
+            op_opt = self.op_opt
 
         time_last = time.time()
 
@@ -606,7 +624,7 @@ class VGG_Combined(BaseModel):
                     total_kl += kl
                 else:
                     _, loss, accu_batch, accu_batch_a, accu_batch_b = sess.run(
-                        [self.op_opt, self.op_loss, self.op_accuracy, self.op_accuracy_a, self.op_accuracy_b],
+                        [op_opt, self.op_loss, self.op_accuracy, self.op_accuracy_a, self.op_accuracy_b],
                         feed_dict={self.is_training: True})
                 step += 1
                 total_loss += loss
@@ -698,32 +716,29 @@ class VGG_Combined(BaseModel):
         # 写文件
         if time_stamp is not None:
             with open('/local/home/david/Remote/models/model_weights/log_vgg_combine_' + time_stamp, 'a+') as f:
-                f.write(str_)
+                f.write(str_ + '\n')
 
         return accu, accu_a, accu_b
 
-    def train(self, sess, n_epochs, task_name, lr=None):
+    def train_individual(self, sess, n_epochs, lr, time_stamp):
         if lr is not None:
             self.config.learning_rate = lr
             self.optimize()
 
-        count_86 = 4
-
-        time_stamp = str(datetime.now())
-
         sess.run(tf.variables_initializer(self.opt.variables()))
         step = self.global_step_tensor.eval(session=sess)
         for epoch in range(n_epochs):
-            step = self.train_one_epoch(sess, self.train_init, epoch, step, task_name, time_stamp)
+            if epoch % 2 == 0:
+                step = self.train_one_epoch(sess, self.train_init, epoch, step, 'A', time_stamp)
+            else:
+                step = self.train_one_epoch(sess, self.train_init, epoch, step, 'B', time_stamp)
+
             accu, accu_a, accu_b = self.eval_once(sess, self.test_init, epoch, time_stamp)
 
             if self.prune_method == 'info_bottle':
-                cr = self.get_CR(sess, self.cluster_res_list)
+                cr = self.get_CR(sess, self.cluster_res_list, time_stamp)
 
-                with open('/local/home/david/Remote/models/model_weights/log_vgg_combine_' + time_stamp, 'a+') as f:
-                    f.write(' cr: ' + str(cr) + '\n')
-
-            if (epoch + 1) % 10 == 0 or (accu >= 0.88 and cr < 0.8):
+            if (epoch + 1) % 10 == 0:
                 if self.prune_method == 'info_bottle':
                     save_path = '/local/home/david/Remote/models/model_weights/vgg512_combine_ib_' + self.task_name + '_' + str(
                         self.prune_threshold) + '_' + str(
@@ -736,10 +751,42 @@ class VGG_Combined(BaseModel):
                         np.around(accu, decimals=4))
                 self.save_weight(sess, save_path)
 
-            if accu < 0.875:
-                count_86 -= 1
-                if count_86 <= 0:
-                    break
+    def train(self, sess, n_epochs, task_name, lr, time_stamp):
+        if lr is not None:
+            self.config.learning_rate = lr
+            self.optimize()
+
+        count_86 = 4
+
+        # 为了在没加vib的时候方便保存参数
+        cr = 1.
+
+        sess.run(tf.variables_initializer(self.opt.variables()))
+        step = self.global_step_tensor.eval(session=sess)
+        for epoch in range(n_epochs):
+            step = self.train_one_epoch(sess, self.train_init, epoch, step, task_name, time_stamp)
+            accu, accu_a, accu_b = self.eval_once(sess, self.test_init, epoch, time_stamp)
+
+            if self.prune_method == 'info_bottle':
+                cr = self.get_CR(sess, self.cluster_res_list, time_stamp)
+
+            if (epoch + 1) % 10 == 0:
+                if self.prune_method == 'info_bottle':
+                    save_path = '/local/home/david/Remote/models/model_weights/vgg512_combine_ib_' + self.task_name + '_' + str(
+                        self.prune_threshold) + '_' + str(
+                        np.around(accu, decimals=4)) + '-' + str(np.around(accu_a, decimals=4)) + '-' + str(
+                        np.around(accu_b,
+                                  decimals=4)) + '_cr-' + str(
+                        np.around(cr, decimals=4))
+                else:
+                    save_path = '/local/home/david/Remote/models/model_weights/vgg512_combine_' + self.task_name + '_' + str(
+                        np.around(accu, decimals=4))
+                self.save_weight(sess, save_path)
+
+            # if accu < 0.875:
+            #     count_86 -= 1
+            #     if count_86 <= 0:
+            #         break
 
     def test(self, sess):
         sess.run(self.test_init)
@@ -761,13 +808,19 @@ class VGG_Combined(BaseModel):
             '\nTesting {}, val_acc={:%}, val_loss={:f}'.format(self.task_name, total_correct_preds / self.n_samples_val,
                                                                total_loss / n_batches))
 
-    def get_CR(self, sess, cluster_res_list):
+    def get_CR(self, sess, cluster_res_list, time_stamp):
         layers_name = ['conv1_1', 'conv1_2',
                        'conv2_1', 'conv2_2',
                        'conv3_1', 'conv3_2', 'conv3_3',
                        'conv4_1', 'conv4_2', 'conv4_3',
                        'conv5_1', 'conv5_2', 'conv5_3',
                        'fc6', 'fc7', 'fc8']
+
+        name_len_dict = {'conv1_1': 72, 'conv1_2': 72,
+                         'conv2_1': 36, 'conv2_2': 36,
+                         'conv3_1': 18, 'conv3_2': 18, 'conv3_3': 18,
+                         'conv4_1': 9, 'conv4_2': 9, 'conv4_3': 9,
+                         'conv5_1': 4, 'conv5_2': 4, 'conv5_3': 4}
 
         # 都是做mask之前的入度和出度
         num_out_channel_dict = dict()
@@ -789,9 +842,9 @@ class VGG_Combined(BaseModel):
                 num_in_channel_dict[layer_name + '/AB'] = 3
                 num_in_channel_dict[layer_name + '/B'] = 3
             else:
-                num_A_last = len(cluster_res_list[layer_index]['A'])
-                num_AB_last = len(cluster_res_list[layer_index]['AB'])
-                num_B_last = len(cluster_res_list[layer_index]['B'])
+                num_A_last = len(cluster_res_list[layer_index-1]['A'])
+                num_AB_last = len(cluster_res_list[layer_index-1]['AB'])
+                num_B_last = len(cluster_res_list[layer_index-1]['B'])
 
                 num_in_channel_dict[layer_name + '/A'] = num_A_last + num_AB_last
                 num_in_channel_dict[layer_name + '/AB'] = num_AB_last
@@ -813,6 +866,7 @@ class VGG_Combined(BaseModel):
 
         # how many channels/dims are prune in each layer
         prune_state = [np.sum(mask == 0) for mask in masks]
+        original_state = [len(mask) for mask in masks]
 
         # 记录一下每一层的出度被剪枝了多少
         out_prune_dict = dict()
@@ -820,13 +874,14 @@ class VGG_Combined(BaseModel):
             # 这一层被剪枝了多少
             out_prune_dict[layer_name] = prune_state[i]
 
-        # 这一层被剪枝后剩下多少in
+        # 记录这一层被剪枝了多少个神经元
         in_prune_dict = dict()
         for i, layer_name in enumerate(layers_name):
             if i == 0:
                 in_prune_dict[layer_name + '/A'] = 0
                 in_prune_dict[layer_name + '/AB'] = 0
                 in_prune_dict[layer_name + '/B'] = 0
+                continue
 
             layer_name_last = layers_name_list[i - 1]
 
@@ -839,6 +894,7 @@ class VGG_Combined(BaseModel):
                 layer_name_last + '/B', 0)
 
         total_params, pruned_params, remain_params = 0, 0, 0
+        total_flops, remain_flops, pruned_flops = 0, 0, 0
 
         for index, layer_name in enumerate(layers_name_list):
             num_in = num_in_channel_dict[layer_name]
@@ -848,64 +904,65 @@ class VGG_Combined(BaseModel):
             num_in_prune = in_prune_dict.get(layer_name)
 
             if layers_type[index] == 'C_ib':
-                n_params = num_in * num_out * 9
-                n_remain = (num_in - num_in_prune) * (num_out - num_out_prune) * 9
+                total_params += num_in * num_out * 9
+                remain_params += (num_in - num_in_prune) * (num_out - num_out_prune) * 9
+
+                # FLOPs
+                for key in name_len_dict.keys():
+                    if layer_name.startswith(key):
+                        M = name_len_dict[key]
+                        break
+                total_flops += 2 * (9 * num_in + 1) * M * M * num_out
+                remain_flops += 2 * (9 * (num_in - num_in_prune) + 1) * M * M * (num_out - num_out_prune)
 
             elif layers_type[index] == 'F_ib':
-                n_params = num_in * num_out
-                n_remain = (num_in - num_in_prune) * (num_out - num_out_prune)
+                total_params += num_in * num_out
+                remain_params += (num_in - num_in_prune) * (num_out - num_out_prune)
 
-            total_params += n_params
-            remain_params += n_remain
-            pruned_params += n_params - n_remain
+                # FLOPs
+                total_flops += (2 * num_in - 1) * num_out
+                remain_flops += (2 * (num_in - num_in_prune) - 1) * (num_out - num_out_prune)
 
         # output layer
-        n_params = num_in_channel_dict['fc8/A'] * 20
-        n_remain = (num_in_channel_dict['fc8/A'] - num_in_prune) * 20
-        total_params += n_params
-        remain_params += n_remain
+        total_params += num_in_channel_dict['fc8/A'] * 20
+        remain_params += (num_in_channel_dict['fc8/A'] - in_prune_dict['fc8/A']) * 20
+        total_params += num_in_channel_dict['fc8/B'] * 20
+        remain_params += (num_in_channel_dict['fc8/B'] - in_prune_dict['fc8/B']) * 20
 
-        n_params = num_in_channel_dict['fc8/B'] * 20
-        n_remain = (num_in_channel_dict['fc8/B'] - num_in_prune) * 20
-        total_params += n_params
-        remain_params += n_remain
+        # FLOPs
+        total_flops += (2 * num_in_channel_dict['fc8/A'] - 1) * 20
+        remain_flops += (2 * (num_in_channel_dict['fc8/A'] - in_prune_dict['fc8/A']) - 1) * 20
+        total_flops += (2 * num_in_channel_dict['fc8/B'] - 1) * 20
+        remain_flops += (2 * (num_in_channel_dict['fc8/B'] - in_prune_dict['fc8/B']) - 1) * 20
 
-        print('Total parameters: {}, Pruned parameters: {}, Remaining params:{}, Remain/Total params:{}'.format(
+        pruned_params = total_params - remain_params
+        pruned_flops = total_flops - remain_flops
+
+        str_1 = 'Total parameters: {}, Pruned parameters: {}, Remaining params:{}, Remain/Total params:{}'.format(
             total_params, pruned_params, remain_params,
-            np.around(float(total_params - pruned_params) / total_params, decimals=5)))
+            np.around(float(total_params - pruned_params) / total_params, decimals=5))
 
-        print('Each layer pruned: {}'.format(prune_state))
+        res_each_layer = dict()
+        for i in range(len(prune_state)):
+            res_each_layer[prune_state[i]] = original_state[i]
+
+        str_2 = 'Each layer pruned: ' + str(res_each_layer).replace(': ', '/')
+
+        str_3 = 'Total FLOPs: {}, Pruned FLOPs: {}, Remaining FLOPs: {}, Remain/Total FLOPs:{}'.format(total_flops,
+                                                                                                            pruned_flops,
+                                                                                                            remain_flops,
+                                                                                                            np.around(
+                                                                                                                float(
+                                                                                                                    total_flops - pruned_flops) / total_flops,
+                                                                                                                decimals=5))
+        print(str_1)
+        print(str_2)
+        print(str_3)
+
+        if time_stamp is not None:
+            with open('/local/home/david/Remote/models/model_weights/log_vgg_combine_' + time_stamp, 'a+') as f:
+                f.write(str_1 + '\n')
+                f.write(str_2 + '\n')
+                f.write(str_3 + '\n')
+
         return np.around(float(total_params - pruned_params) / total_params, decimals=5)
-
-    def get_flops(sess, model):
-        # Obtain all masks
-        masks = list()
-        layers_type = list()
-        for layer in model.layers:
-            if layer.layer_type == 'C_ib' or layer.layer_type == 'F_ib':
-                layers_type += [layer.layer_type]
-                masks += [layer.get_mask(threshold=model.prune_threshold)]
-
-        masks = sess.run(masks)
-
-        # how many channels/dims are prune in each layer
-        prune_state = [np.sum(mask == 0) for mask in masks]
-
-        # 原来的计算量
-        total_flops, remain_flops, pruned_flops = 0, 0, 0
-
-        for layer_index, num_mask in enumerate(prune_state):
-            C_in = model.layers[layer_index].weight_tensors[0].shape.as_list()[-2]
-            C_out = model.layers[layer_index].weight_tensors[0].shape.as_list()[-1]
-            if layers_type[layer_index] == 'C_ib':
-                # Feature map 大小
-                M = model.layers[layer_index].layer_output.shape.as_list()[1]
-                total_flops += 9 * C_in * M * M * C_out
-                pruned_flops += 9 * C_in * M * M * num_mask
-            elif layers_type[layer_index] == 'F_ib':
-                total_flops += (2 * C_in - 1) * C_out
-                pruned_flops += (2 * C_in - 1) * num_mask
-
-        print('Total Flops: {}, Pruned Flops: {}, Remaining Flops:{}, Remain/Total Flops:{}, '
-              'Each layer pruned: {}'.format(total_flops, pruned_flops, remain_flops,
-                                             float(total_flops - pruned_flops) / total_flops, prune_state))

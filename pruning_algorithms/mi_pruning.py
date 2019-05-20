@@ -30,6 +30,7 @@ import torch
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
+
 # gpu 0
 # os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4eec6600-f5e3-f385-9b14-850ae9a2b236'
 
@@ -200,6 +201,7 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     :return:
     """
     config = process_config("../configs/ib_vgg.json")
+    # config = process_config("../configs/vgg_net.json")
     gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True
 
@@ -217,23 +219,37 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
 
     # Rebuild model
     model = VGG_Combined(config, task_name, weight_a, weight_b, cluster_res_list, signal_list, musk=False, gamma=gamma,
-                         ib_threshold=ib_threshold)
+                         ib_threshold=ib_threshold,
+                         model_path=None)
+    # model_path='/local/home/david/Remote/models/model_weights/vgg512_combine_ib_celeba_0.01_0.8806-0.8876-0.8735_cr-0.3973_epoch-30_1e-5')
     model.set_global_tensor(training, regularizer_zero, regularizer_decay, regularizer_zero)
     model.build()
 
     # Train
     session.run(tf.global_variables_initializer())
+
+    # 建立Graph
+    train_writer = tf.summary.FileWriter('/local/home/david/Remote/log/train/', session.graph)
+
     session.run(model.test_init)
-
-    # Graph
-    # summary_writer = tf.summary.FileWriter('/local/home/david/log/', session.graph)
-
     model.eval_once(session, model.test_init, -1)
 
-    # model.get_CR(session, cluster_res_list)
-    model.train(sess=session, n_epochs=200, task_name='AB', lr=0.01)
-    # model.train(sess=session, n_epochs=80, task_name='A', lr=0.001)
-    # model.train(sess=session, n_epochs=80, task_name='A', lr=0.0001)
+    time_stamp = str(datetime.now())
+
+    # Test
+    model.get_CR(session, cluster_res_list, time_stamp)
+
+    print('————————————————————kl_factor=1e-5, 训练30个epoch————————————————————')
+    model.train(sess=session, n_epochs=30, task_name='AB', lr=0.01, time_stamp=time_stamp)
+    print('————————————————————改变为1e-6之后, 重新训练10个epoch————————————————————')
+    model.kl_factor = 1e-6
+    model.loss()
+    model.optimize()
+    model.evaluate()
+    model.eval_once(session, model.test_init, -1, time_stamp=time_stamp)
+    model.train(sess=session, n_epochs=10, task_name='AB', lr=0.01, time_stamp=time_stamp)
+    print('————————————————————交替训练任务A和任务B各5次————————————————————')
+    model.train_individual(sess=session, n_epochs=10, lr=0.01, time_stamp=time_stamp)
 
 
 def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_threshold_dict, method_mi, dim_list,
@@ -309,7 +325,7 @@ def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_thr
     for layer_index in layer_index_range:
         cluster_res_list[layer_index] = pickle.load(open(
             '/local/home/david/Remote/models/model_weights/cluster_results/cluster_res_for_layer-' + str(
-                layer_index) + '_alpha-0.2', 'rb'))
+                layer_index) + '_alpha-0.4', 'rb'))
 
     # The main loop
     for layer_index in layer_index_range:
@@ -568,29 +584,6 @@ def pruning(model_path_1, model_path_2, alpha_threshold_dict, method_mi, binsize
         weight_dict_b = pickle.load(open(model_path_2, 'rb'))
         cluster_res_list = pickle.load(open(path_cluster_res_list, 'rb'))
 
-    # TODO: 以下为test
-    # cluster_res_list = list()
-    #
-    # for layer_index in range(15):
-    #     # Total number of neurons
-    #     num_neuron_total = dim_list[layer_index] * 2
-    #
-    #     # Store clusters for each layer
-    #     cluster_layer_dict = dict()
-    #
-    #     # Init T^A, T^B and T^AB to store clusters for each layer
-    #     cluster_layer_dict['A'] = list()
-    #     cluster_layer_dict['B'] = list()
-    #     cluster_layer_dict['AB'] = [x for x in range(dim_list[layer_index] * 2)]
-    #     cluster_res_list += [cluster_layer_dict]
-    # # Output layer
-    # cluster_layer_dict = dict()
-    # cluster_layer_dict['A'] = [x for x in range(20)]
-    # cluster_layer_dict['B'] = [x + 20 for x in range(20)]
-    # cluster_layer_dict['AB'] = list()
-    # cluster_res_list += [cluster_layer_dict]
-    # # end Test
-
     print('[%s] Model Summary:')
     for layer_index, layer_clusters in enumerate(cluster_res_list):
         num_A = len(layer_clusters['A'])
@@ -612,37 +605,44 @@ def pruning(model_path_1, model_path_2, alpha_threshold_dict, method_mi, binsize
                       ib_threshold=ib_threshold)
 
 
+def combine_cluster_res(alpha_conv, alpha_fc):
+    path = '/local/home/david/Remote/models/model_weights/cluster_results/'
+    res = list()
+    for i in range(15):
+        if i < 13:
+            name = path + 'cluster_res_for_layer-' + str(i) + '_alpha-' + str(alpha_conv)
+        else:
+            name = path + 'cluster_res_for_layer-' + str(i) + '_alpha-' + str(alpha_fc)
+        w = pickle.load(open(name, 'rb'))
+        w['AB'] = list(set(w['AB']) - set(w['B']))
+        res += [w]
+
+    cluster_layer_dict = dict()
+    cluster_layer_dict['A'] = [x for x in range(20)]
+    cluster_layer_dict['B'] = [x + 20 for x in range(20)]
+    cluster_layer_dict['AB'] = list()
+    res += [cluster_layer_dict]
+
+    pickle.dump(res, open(path + 'cluster_results_' + str({'conv': alpha_conv, 'fc': alpha_fc}), 'wb'))
+
+
 if __name__ == '__main__':
     path = '/local/home/david/Remote/models/model_weights/'
 
+    # 画每一层的MI直方图
     # draw_mi(path + 'vgg512_celeba2_0.892631_best')
 
-    pruning(model_path_1=path + 'vgg512_celeba1_0.907119_best',
-            model_path_2=path + 'vgg512_celeba2_0.892631_best',
-            alpha_threshold_dict={'conv': 0.2, 'fc': 0.2},
+    pruning(model_path_1=path + 'best_vgg512_celeba1_0.907119',
+            model_path_2=path + 'best_vgg512_celeba2_0.892631',
+            alpha_threshold_dict={'conv': 0.2, 'fc': 8},
             method_mi='kde_in',
             binsize=0.05,
             layer_index_range=[13, 14],
             gamma=15,
             ib_threshold=0.01,
-            if_rebuild=False,
-            path_cluster_res_list=None)
-    # path_cluster_res_list='/local/home/david/Remote/models/model_weights/cluster_results/cluster_results')
+            if_rebuild=True,
+            # path_cluster_res_list=None)
+            path_cluster_res_list='/local/home/david/Remote/models/model_weights/cluster_results/cluster_results_{\'conv\': 0.2, \'fc\': 8}')
 
-    # path = '/local/home/david/Remote/models/model_weights/cluster_results/'
-    #
-    # res = list()
-    # for i in range(15):
-    #     if i < 13:
-    #         name = path + 'cluster_res_for_layer-' + str(i) + '_alpha-0.2'
-    #     else:
-    #         name = path + 'cluster_res_for_layer-' + str(i) + '_alpha-0.1'
-    #     w = pickle.load(open(name, 'rb'))
-    #     w['AB'] = list(set(w['AB']) - set(w['B']))
-    #     res += [w]
-    #
-    # cluster_layer_dict = dict()
-    # cluster_layer_dict['A'] = [x for x in range(20)]
-    # cluster_layer_dict['B'] = [x + 20 for x in range(20)]
-    # cluster_layer_dict['AB'] = list()
-    # res += [cluster_layer_dict]
+    # 合并每一层的cluster结果，并保存在/cluster_results目录下
+    # combine_cluster_res(alpha_conv=0.2, alpha_fc=8)
