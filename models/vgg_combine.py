@@ -907,7 +907,7 @@ class VGG_Combined(BaseModel):
                 in_prune_dict[layer_name + '/B'] = 0
                 continue
 
-            layer_name_last = layers_name_list[i - 1]
+            layer_name_last = layers_name[i - 1]
 
             # 输入被剪枝掉了多少!!!!
             in_prune_dict[layer_name + '/A'] = out_prune_dict.get(layer_name_last + '/A', 0) + out_prune_dict.get(
@@ -940,12 +940,20 @@ class VGG_Combined(BaseModel):
                 remain_flops += 2 * (9 * (num_in - num_in_prune) + 1) * M * M * (num_out - num_out_prune)
 
             elif layers_type[index] == 'F_ib':
-                total_params += num_in * num_out
-                remain_params += (num_in - num_in_prune) * (num_out - num_out_prune)
+                if 'fc6' in layer_name:
+                    total_params += 4 * num_in * num_out
+                    remain_params += 4 * (num_in - num_in_prune) * (num_out - num_out_prune)
 
-                # FLOPs
-                total_flops += (2 * num_in - 1) * num_out
-                remain_flops += (2 * (num_in - num_in_prune) - 1) * (num_out - num_out_prune)
+                    # FLOPs
+                    total_flops += (2 * num_in * 4 - 1) * num_out
+                    remain_flops += (2 * (num_in - num_in_prune) * 4 - 1) * (num_out - num_out_prune)
+                else:
+                    total_params += num_in * num_out
+                    remain_params += (num_in - num_in_prune) * (num_out - num_out_prune)
+
+                    # FLOPs
+                    total_flops += (2 * num_in - 1) * num_out
+                    remain_flops += (2 * (num_in - num_in_prune) - 1) * (num_out - num_out_prune)
 
         # output layer
         total_params += num_in_channel_dict['fc8/A'] * 20

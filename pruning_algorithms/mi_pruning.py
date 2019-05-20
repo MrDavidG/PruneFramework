@@ -32,11 +32,11 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
 # gpu 0
-# os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4eec6600-f5e3-f385-9b14-850ae9a2b236'
+os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4eec6600-f5e3-f385-9b14-850ae9a2b236'
 
 
 # gpu 1
-os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4b0856cd-c698-63a2-0b6e-9a33d380f9c4'
+# os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4b0856cd-c698-63a2-0b6e-9a33d380f9c4'
 
 
 def draw_mi_hist(layers_output, labels):
@@ -232,7 +232,7 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     # train_writer = tf.summary.FileWriter('/local/home/david/Remote/log/train/', session.graph)
 
     session.run(model.test_init)
-    model.eval_once(session, model.test_init, -1)
+    # model.eval_once(session, model.test_init, -1)
 
     time_stamp = str(datetime.now())
 

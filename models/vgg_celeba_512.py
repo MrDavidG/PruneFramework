@@ -400,7 +400,8 @@ class VGGNet(BaseModel):
                                    128, 128,
                                    256, 256, 256,
                                    512, 512, 512,
-                                   512, 512, 512]):
+                                   512, 512, 512,
+                                   512, 512]):
 
             if n < 13:
                 # Conv
@@ -411,12 +412,21 @@ class VGGNet(BaseModel):
                 total_flops += 2 * (9 * in_channels + 1) * M * M * n_out
                 remain_flops += 2 * (9 * (in_channels - in_pruned) + 1) * M * M * (n_out - prune_state[n])
             else:
-                # Fc
-                total_params += in_channels * n_out
-                remain_params += (in_channels - in_pruned) * (n_out - prune_state[n])
+                if n == 13:
+                    # Fc
+                    total_params += in_channels * 4 * n_out
+                    remain_params += (in_channels - in_pruned) * 4 * (n_out - prune_state[n])
 
-                total_flops += (2 * in_channels - 1) * n_out
-                remain_flops += (2 * (in_channels - in_pruned) - 1) * (n_out - prune_state[n])
+                    total_flops += (2 * in_channels * 4 - 1) * n_out
+                    remain_flops += (2 * (in_channels - in_pruned) * 4 - 1) * (n_out - prune_state[n])
+
+                else:
+                    # Fc
+                    total_params += in_channels * n_out
+                    remain_params += (in_channels - in_pruned) * (n_out - prune_state[n])
+
+                    total_flops += (2 * in_channels - 1) * n_out
+                    remain_flops += (2 * (in_channels - in_pruned) - 1) * (n_out - prune_state[n])
 
             # For next layer
             in_channels = n_out
