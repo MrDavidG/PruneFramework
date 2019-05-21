@@ -37,6 +37,8 @@ class VGGNet(BaseModel):
 
         if task_name in ['celeba', 'celeba1', 'celeba2']:
             self.imgs_path = self.config.dataset_path + 'celeba/'
+        elif task_name in ['deepfashion1', 'deepfashion2', 'deepfashion']:
+            self.imgs_path = self.config.dataset_path + 'deepfashion/'
         else:
             self.imgs_path = self.config.dataset_path + task_name + '/'
 
@@ -59,7 +61,11 @@ class VGGNet(BaseModel):
             self.initial_weight = False
         else:
             # Use pre-train weights in conv, but init weights in fc
-            self.weight_dict = self.construct_initial_weights()
+            if self.task_name.startswith('deepfashion'):
+                self.weight_dict = self.construct_initial_weights(
+                    model_path='/local/home/david/Remote/datasets/vgg_deepfashion_pretrain')
+            else:
+                self.weight_dict = self.construct_initial_weights()
             print('[%s] Initialize weight matrix' % (datetime.now()))
             self.initial_weight = True
 
@@ -133,7 +139,7 @@ class VGGNet(BaseModel):
                               ('conv2_1', 1.0 / 16), ('conv2_2', 1.0 / 16), 'pooling',
                               ('conv3_1', 1.0 / 8), ('conv3_2', 1.0 / 8), ('conv3_3', 1.0 / 8), 'pooling',
                               ('conv4_1', 1.0 / 4), ('conv4_2', 1.0 / 4), ('conv4_3', 1.0 / 4), 'pooling',
-                              ('conv5_1', 1.0 / 1), ('conv5_2', 1.0 / 1), ('conv5_3', 1.0 / 1), 'pooling']:
+                              ('conv5_1', 2.0 / 1), ('conv5_2', 2.0 / 1), ('conv5_3', 2.0 / 1), 'pooling']:
                 if set_layer != 'pooling':
                     conv_name, kl_mult = set_layer
                     with tf.variable_scope(conv_name):
@@ -264,10 +270,14 @@ class VGGNet(BaseModel):
             pass
 
         # 写文件
-        with open(
-                '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_ib_' + time_stamp,
-                'a+') as f:
-            f.write(str_ + '\n')
+        if time_stamp is not None:
+            if self.prune_method == 'info_bottle':
+                path = '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_ib_' + time_stamp
+            else:
+                path = '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_' + time_stamp
+
+            with open(path, 'a+') as f:
+                f.write(str_ + '\n')
 
         return step
 
@@ -319,11 +329,14 @@ class VGGNet(BaseModel):
                                                                                    time_end - time_start)
         print('\n' + str_)
 
-        # 写文件
         if time_stamp is not None:
-            with open(
-                    '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_ib_' + time_stamp,
-                    'a+') as f:
+            # 写文件
+            if self.prune_method == 'info_bottle':
+                path = '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_ib_' + time_stamp
+            else:
+                path = '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_' + time_stamp
+
+            with open(path, 'a+') as f:
                 f.write(str_ + '\n')
 
         return accu
@@ -455,9 +468,12 @@ class VGGNet(BaseModel):
         print(str_2)
 
         if time_stamp is not None:
-            with open(
-                    '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_ib_' + time_stamp,
-                    'a+') as f:
+            if self.prune_method == 'info_bottle':
+                path = '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_ib_' + time_stamp
+            else:
+                path = '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_' + time_stamp
+
+            with open(path, 'a+') as f:
                 f.write(str_1 + '\n')
                 f.write(str_2 + '\n')
 
@@ -465,82 +481,58 @@ class VGGNet(BaseModel):
 
 
 if __name__ == '__main__':
-    config = process_config("../configs/ib_vgg.json")
-    # config = process_config("../configs/vgg_net.json")
+    # for task_name in ['celeba1', 'celeba2', 'celeba']:
+    for task_name in ['deepfashion1', 'deepfashion2', 'deepfashion']:
+        # config = process_config("../configs/ib_vgg.json")
+        config = process_config("../configs/vgg_net.json")
 
-    # apply video memory dynamically
-    gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
-    gpu_config.gpu_options.allow_growth = True
-
-    for task_name in ['celeba']:
+        # apply video memory dynamically
+        gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
+        gpu_config.gpu_options.allow_growth = True
         print('Training on task {:s}'.format(task_name))
         tf.reset_default_graph()
         # session for training
-
         session = tf.Session(config=gpu_config)
 
         training = tf.placeholder(dtype=tf.bool, name='training')
 
-        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.00)
-        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.00)
+        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.001)
+        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.001)
 
-        # Train
+        # 为了测试vib效果
+        if task_name == 'celeba1':
+            model_path = '/local/home/david/Remote/models/model_weights/best_vgg512_celeba1_0.907119'
+        elif task_name == 'celeba2':
+            model_path = '/local/home/david/Remote/models/model_weights/best_vgg512_celeba2_0.892631'
+        elif task_name == 'celeba':
+            model_path = '/local/home/david/Remote/models/model_weights/best_vgg512_celeba_0.89747'
+        else:
+            model_path = None
+
         model = VGGNet(config, task_name, musk=False, gamma=15,
-                       model_path='/local/home/david/Remote/models/model_weights/vgg512_celeba_0.89747_best')
+                       model_path=model_path)
         # model_path='/local/home/david/Remote/models/model_weights/vgg512_celeba2_0.892631_best')
         model.set_global_tensor(training, regularizer_conv, regularizer_fc)
         model.build()
 
         session.run(tf.global_variables_initializer())
-        model.eval_once(session, model.test_init, -1, None)
 
         time_stamp = str(datetime.now())
+        model.eval_once(session, model.test_init, -1, time_stamp)
+        # model.get_CR(session, time_stamp)
+
+        # 正常训练模型
+        model.train(sess=session, n_epochs=10, lr=0.1, time_stamp=time_stamp)
+        model.train(sess=session, n_epochs=20, lr=0.01, time_stamp=time_stamp)
+        model.train(sess=session, n_epochs=30, lr=0.001, time_stamp=time_stamp)
+        model.train(sess=session, n_epochs=20, lr=0.0001, time_stamp=time_stamp)
 
         # 先是1e-5进行30个epoch，然后变成1e-6来进行30个epoch
-        model.train(sess=session, n_epochs=30, lr=0.01, time_stamp=time_stamp)
-        print('————————————————————改变为1e-6之后, 重新训练10个epoch————————————————————')
-        model.kl_factor = 1e-6
-        model.loss()
-        model.optimize()
-        model.evaluate()
-        model.eval_once(session, model.test_init, -1, None)
-        model.train(sess=session, n_epochs=20, lr=0.01, time_stamp=time_stamp)
-
-        # model.train(sess=session, n_epochs=30, lr=0.0001)
-
-
-def exp_celeba(task_name_list, model_path=0, regularizer=0, is_vib=False, gamma=None):
-    if is_vib:
-        config = process_config("../configs/ib_vgg.json")
-    else:
-        config = process_config("../configs/vgg_net.json")
-
-    # apply video memory dynamically
-    gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
-    gpu_config.gpu_options.allow_growth = True
-
-    for task_name in task_name_list:
-        print('Training on task {:s}'.format(task_name))
-        tf.reset_default_graph()
-        # session for training
-
-        session = tf.Session(config=gpu_config)
-
-        training = tf.placeholder(dtype=tf.bool, name='training')
-
-        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=regularizer)
-        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=regularizer)
-
-        # Train
-        model = VGGNet(config, task_name, musk=False, gamma=gamma, model_path=model_path)
-        model.set_global_tensor(training, regularizer_conv, regularizer_fc)
-        model.build()
-
-        session.run(tf.global_variables_initializer())
-        model.eval_once(session, model.test_init, -1)
-
-        model.train(sess=session, n_epochs=30, lr=0.01)
-
-        model.train(sess=session, n_epochs=30, lr=0.001)
-
-        model.train(sess=session, n_epochs=40, lr=0.0001)
+        # model.train(sess=session, n_epochs=30, lr=0.01, time_stamp=time_stamp)
+        # print('————————————————————改变为1e-6之后, 重新训练10个epoch————————————————————')
+        # model.kl_factor = 1e-6
+        # model.loss()
+        # model.optimize()
+        # model.evaluate()
+        # model.eval_once(session, model.test_init, -1, None)
+        # model.train(sess=session, n_epochs=10, lr=0.01, time_stamp=time_stamp)

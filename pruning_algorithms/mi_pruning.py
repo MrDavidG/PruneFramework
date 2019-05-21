@@ -221,7 +221,7 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     model = VGG_Combined(config, task_name, weight_a, weight_b, cluster_res_list, signal_list, musk=False, gamma=gamma,
                          ib_threshold=ib_threshold,
                          # model_path=None)
-                         model_path='/local/home/david/Remote/models/model_weights/vgg512_combine_ib_celeba_0.01_0.8823-0.8892-0.8754_cr-0.023_epoch-30_1e-5_0521')
+                         model_path='/local/home/david/Remote/models/model_weights/vgg512_combine_ib_celeba_0.01_0.8862-0.8939-0.8786_cr-0.0007_rdnet_30-1e-5+10-1e-6-individual')
     model.set_global_tensor(training, regularizer_zero, regularizer_decay, regularizer_zero)
     model.build()
 
@@ -231,13 +231,12 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     # 建立Graph
     # train_writer = tf.summary.FileWriter('/local/home/david/Remote/log/train/', session.graph)
 
-    session.run(model.test_init)
-    # model.eval_once(session, model.test_init, -1)
-
+    model.eval_once(session, model.test_init, -1)
+    model.get_CR(session, cluster_res_list, None)
     time_stamp = str(datetime.now())
 
     # Test
-    model.get_CR(session, cluster_res_list, time_stamp)
+    # model.get_CR(session, cluster_res_list, time_stamp)
 
     # print('————————————————————kl_factor=1e-5, 训练30个epoch————————————————————')
     # model.train(sess=session, n_epochs=30, task_name='AB', lr=0.01, time_stamp=time_stamp)
@@ -248,8 +247,8 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     # model.evaluate()
     # model.eval_once(session, model.test_init, -1, time_stamp=time_stamp)
     # model.train(sess=session, n_epochs=10, task_name='AB', lr=0.01, time_stamp=time_stamp)
-    print('————————————————————交替训练任务A和任务B共10次————————————————————')
-    model.train_individual(sess=session, n_epochs=10, lr=0.01, time_stamp=time_stamp)
+    # print('————————————————————交替训练任务A和任务B共10次————————————————————')
+    # model.train_individual(sess=session, n_epochs=10, lr=0.01, time_stamp=time_stamp)
 
 
 def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_threshold_dict, method_mi, dim_list,
@@ -639,7 +638,7 @@ if __name__ == '__main__':
             binsize=0.05,
             layer_index_range=[13, 14],
             gamma=15,
-            ib_threshold=0.01,
+            ib_threshold=7,
             if_rebuild=True,
             # path_cluster_res_list=None)
             path_cluster_res_list='/local/home/david/Remote/models/model_weights/cluster_results/cluster_results_{\'conv\': 0.2, \'fc\': 8}')

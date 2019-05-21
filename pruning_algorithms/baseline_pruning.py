@@ -56,7 +56,8 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
 
     # Rebuild model
     model = VGG_Combined(config, task_name, weight_a, weight_b, cluster_res_list, signal_list, musk=False, gamma=gamma,
-                         ib_threshold=ib_threshold)
+                         ib_threshold=ib_threshold,
+                         model_path='/local/home/david/Remote/models/model_weights/best_vgg512_combine_ib_celeba_0.01_0.8862-0.8935-0.879_cr-0.0216_暴力全连接')
     model.set_global_tensor(training, regularizer_zero, regularizer_decay, regularizer_zero)
     model.build()
 
@@ -64,17 +65,17 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     session.run(tf.global_variables_initializer())
 
     model.eval_once(session, model.test_init, -1)
-
-    time_stamp = str(datetime.now())
-    model.get_CR(session, cluster_res_list, time_stamp)
-    model.train(sess=session, n_epochs=30, task_name='AB', lr=0.01, time_stamp=time_stamp)
-    print('————————————————————改变为1e-6之后, 重新训练30个epoch————————————————————')
-    model.kl_factor = 1e-6
-    model.loss()
-    model.optimize()
-    model.evaluate()
-    model.eval_once(session, model.test_init, -1, time_stamp)
-    model.train(sess=session, n_epochs=20, task_name='AB', lr=0.01, time_stamp=time_stamp)
+    model.get_CR(session, cluster_res_list, None)
+    # time_stamp = str(datetime.now())
+    # model.get_CR(session, cluster_res_list, time_stamp)
+    # model.train(sess=session, n_epochs=30, task_name='AB', lr=0.01, time_stamp=time_stamp)
+    # print('————————————————————改变为1e-6之后, 重新训练30个epoch————————————————————')
+    # model.kl_factor = 1e-6
+    # model.loss()
+    # model.optimize()
+    # model.evaluate()
+    # model.eval_once(session, model.test_init, -1, time_stamp)
+    # model.train(sess=session, n_epochs=20, task_name='AB', lr=0.01, time_stamp=time_stamp)
 
 
 def get_connection_signal(cluster_res_list, dim_list):

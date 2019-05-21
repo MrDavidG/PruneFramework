@@ -37,6 +37,8 @@ class VGG_Combined(BaseModel):
 
         if task_name in ['celeba', 'celeba1', 'celeba2']:
             self.imgs_path = self.config.dataset_path + 'celeba/'
+        elif task_name in ['deepfashion1', 'deepfashion2', 'deepfashion']:
+            self.imgs_path = self.config.dataset_path + 'deepfashion/'
         else:
             self.imgs_path = self.config.dataset_path + task_name + '/'
         # conv with biases and without bn
@@ -49,6 +51,7 @@ class VGG_Combined(BaseModel):
         self.gamma = gamma
 
         if self.prune_method == 'info_bottle' and ib_threshold is not None:
+            print('-----------------------重新设置ib_threshold为{}-----------------------'.format(ib_threshold))
             self.prune_threshold = ib_threshold
 
         if self.prune_method == 'info_bottle':
@@ -310,7 +313,7 @@ class VGG_Combined(BaseModel):
                               ('conv2_1', 1.0 / 16), ('conv2_2', 1.0 / 16), 'pooling',
                               ('conv3_1', 1.0 / 8), ('conv3_2', 1.0 / 8), ('conv3_3', 1.0 / 8), 'pooling',
                               ('conv4_1', 1.0 / 4), ('conv4_2', 1.0 / 4), ('conv4_3', 1.0 / 4), 'pooling',
-                              ('conv5_1', 3.0 / 2), ('conv5_2', 3.0 / 2), ('conv5_3', 3.0 / 2), 'pooling']:
+                              ('conv5_1', 2.0 / 1), ('conv5_2', 2.0 / 1), ('conv5_3', 2.0 / 1), 'pooling']:
                 if layer_index == 0:
                     conv_name, kl_mult = layer_set
 

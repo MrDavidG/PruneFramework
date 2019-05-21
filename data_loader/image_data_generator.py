@@ -35,10 +35,10 @@ class ImageDataGenerator(DataGenerator):
         resize_length = resize_dict.get(dataset_name, 64)
         image = tf.image.resize_image_with_crop_or_pad(image, resize_length, resize_length)
 
-        if dataset_name in ['celeba']:
+        if dataset_name in ['celeba', 'deepfashion']:
             image = tf.reverse(image, axis=[-1])
 
-        if dataset_name not in ['imagenet12', 'imagenet12_large', 'celeba']:
+        if dataset_name not in ['imagenet12', 'imagenet12_large', 'celeba', 'deepfashion']:
             image = image / 255.
 
         if dataset_name not in ['mnist', 'cifar10']:
@@ -66,10 +66,10 @@ class ImageDataGenerator(DataGenerator):
         resize_length = resize_dict.get(dataset_name, 64)
         image = tf.image.resize_image_with_crop_or_pad(image, resize_length, resize_length)
 
-        if dataset_name in ['celeba']:
+        if dataset_name in ['celeba', 'deepfashion']:
             image = tf.reverse(image, axis=[-1])
 
-        if dataset_name not in ['imagenet12', 'imagenet12_large', 'celeba']:
+        if dataset_name not in ['imagenet12', 'imagenet12_large', 'celeba', 'deepfashion']:
             image = image / 255.
 
         if dataset_name not in ['mnist', 'cifar10']:
@@ -122,6 +122,33 @@ class ImageDataGenerator(DataGenerator):
             labels_val = labels_list[partition_list == 0]
 
             dataset_name = 'celeba'
+
+        elif dataset_name in ['deepfashion1', 'deepfashion2', 'deepfashion']:
+            content = pd.read_csv(imgs_path + 'labels_10_train_val_path.txt', delim_whitespace=True, header=None).values
+            filepath_list = content[:, 0]
+
+            if dataset_name == 'deepfashion1':
+                labels_all = content[:, 1:6]
+            elif dataset_name == 'deepfashion2':
+                labels_all = content[:, 6:11]
+            elif dataset_name == 'deepfashion':
+                labels_all = content[:, 1:]
+            labels_list = np.array(labels_all, dtype=np.float32)
+
+            # Split train and test dataset
+            partition_path_list = imgs_path + 'partition_deepfashion.pickle'
+            partition_list = pickle.load(open(partition_path_list, 'rb'))
+
+            n_classes = labels_list.shape[1]
+
+            filepath_list_train = filepath_list[partition_list == 1]
+            labels_train = labels_list[partition_list == 1]
+
+            filepath_list_val = filepath_list[partition_list == 0]
+            labels_val = labels_list[partition_list == 0]
+
+            dataset_name = 'deepfashion'
+
         else:
             imgs_path_train = imgs_path + 'train/'
             imgs_path_val = imgs_path + 'val/'
@@ -184,6 +211,7 @@ class ImageDataGenerator(DataGenerator):
             'imagenet12': 224,
             'imagenet12_large': 224,
             'celeba': 72,
+            'deepfashion': 72,
             'gtsrb': 72,
             'omniglot': 72,
             'svhn': 72,
