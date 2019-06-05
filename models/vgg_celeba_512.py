@@ -37,8 +37,8 @@ class VGGNet(BaseModel):
 
         if task_name in ['celeba', 'celeba1', 'celeba2']:
             self.imgs_path = self.config.dataset_path + 'celeba/'
-        elif task_name in ['deepfashion1', 'deepfashion2', 'deepfashion']:
-            self.imgs_path = self.config.dataset_path + 'deepfashion/'
+        elif task_name in ['lfw1', 'lfw2', 'lfw']:
+            self.imgs_path = self.config.dataset_path + 'lfw/'
         else:
             self.imgs_path = self.config.dataset_path + task_name + '/'
 
@@ -155,6 +155,7 @@ class VGGNet(BaseModel):
                             ib_layer = InformationBottleneckLayer(y, layer_type='C_ib', weight_dict=self.weight_dict,
                                                                   is_training=self.is_training,
                                                                   kl_mult=kl_mult, mask_threshold=self.prune_threshold)
+
                             self.layers.append(ib_layer)
                             y, ib_kld = ib_layer.layer_output
                             self.kl_total += ib_kld
@@ -179,6 +180,7 @@ class VGGNet(BaseModel):
                                                               is_training=self.is_training,
                                                               kl_mult=self.gamma,
                                                               mask_threshold=self.prune_threshold)
+
                         self.layers.append(ib_layer)
                         y, ib_kld = ib_layer.layer_output
                         self.kl_total += ib_kld
@@ -214,8 +216,7 @@ class VGGNet(BaseModel):
     def evaluate(self):
         with tf.name_scope('predict'):
             correct_preds = tf.equal(self.Y, tf.sign(self.op_logits))
-            self.op_accuracy = tf.reduce_sum(tf.cast(correct_preds, tf.float32)) / tf.cast(tf.shape(self.Y)[1],
-                                                                                           tf.float32)
+            self.op_accuracy = tf.reduce_sum(tf.cast(correct_preds, tf.float32)) / tf.cast(tf.shape(self.Y)[1], tf.float32)
 
     def build(self, weight_dict=None, share_scope=None, is_merge_bn=False):
         # dont need to merge bn
@@ -481,10 +482,10 @@ class VGGNet(BaseModel):
 
 
 if __name__ == '__main__':
-    # for task_name in ['celeba1', 'celeba2', 'celeba']:
-    for task_name in ['deepfashion1', 'deepfashion2', 'deepfashion']:
-        # config = process_config("../configs/ib_vgg.json")
-        config = process_config("../configs/vgg_net.json")
+    # for task_name in ['celeba']:
+    for task_name in ['lfw']:
+        config = process_config("../configs/ib_vgg.json")
+        # config = process_config("../configs/vgg_net.json")
 
         # apply video memory dynamically
         gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
@@ -496,16 +497,28 @@ if __name__ == '__main__':
 
         training = tf.placeholder(dtype=tf.bool, name='training')
 
-        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.001)
-        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.001)
+        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.00)
+        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.00)
 
         # 为了测试vib效果
-        if task_name == 'celeba1':
-            model_path = '/local/home/david/Remote/models/model_weights/best_vgg512_celeba1_0.907119'
-        elif task_name == 'celeba2':
-            model_path = '/local/home/david/Remote/models/model_weights/best_vgg512_celeba2_0.892631'
-        elif task_name == 'celeba':
-            model_path = '/local/home/david/Remote/models/model_weights/best_vgg512_celeba_0.89747'
+        # if task_name == 'celeba1':
+        #     model_path = '/local/home/david/Remote/models/model_weights/best_vgg512_celeba1_0.907119'
+        # elif task_name == 'celeba2':
+        #     model_path = '/local/home/david/Remote/models/model_weights/best_vgg512_celeba2_0.892631'
+        # elif task_name == 'celeba':
+        #     model_path = '/local/home/david/Remote/models/model_weights/best_vgg512_ib_celeba_0.01_0.885675_cr-0.02222'
+        # else:
+        #     model_path = None
+        model_path = None
+        if task_name == 'lfw1':
+            model_path = '/local/home/david/Remote/models/model_weights/vgg512_ib_lfw1_0.01_0.883428_cr-0.00812'
+                         # 'vgg512_ib_lfw1_0.01_0.878634_cr-0.03259' 这个是120+20的结果
+                         # 'vgg512_lfw1_0.9039'
+        elif task_name == 'lfw2':
+            model_path = '/local/home/david/Remote/models/model_weights/vgg512_ib_lfw2_0.01_0.801503_cr-0.1332_4e-5_80epoch'
+                         # 'vgg512_lfw2_0.833219'
+        elif task_name == 'lfw':
+            model_path = '/local/home/david/Remote/models/model_weights/best_vgg512_ib_lfw_0.01_0.848858_cr-0.01683'
         else:
             model_path = None
 
@@ -517,22 +530,23 @@ if __name__ == '__main__':
 
         session.run(tf.global_variables_initializer())
 
+        model.eval_once(session, model.test_init, -1, None)
         time_stamp = str(datetime.now())
-        model.eval_once(session, model.test_init, -1, time_stamp)
+        # model.eval_once(session, model.test_init, -1, time_stamp)
         # model.get_CR(session, time_stamp)
 
         # 正常训练模型
-        model.train(sess=session, n_epochs=10, lr=0.1, time_stamp=time_stamp)
-        model.train(sess=session, n_epochs=20, lr=0.01, time_stamp=time_stamp)
-        model.train(sess=session, n_epochs=30, lr=0.001, time_stamp=time_stamp)
-        model.train(sess=session, n_epochs=20, lr=0.0001, time_stamp=time_stamp)
-
-        # 先是1e-5进行30个epoch，然后变成1e-6来进行30个epoch
+        # model.train(sess=session, n_epochs=20, lr=0.1, time_stamp=time_stamp)
         # model.train(sess=session, n_epochs=30, lr=0.01, time_stamp=time_stamp)
+        # model.train(sess=session, n_epochs=20, lr=0.001, time_stamp=time_stamp)
+        # model.train(sess=session, n_epochs=10, lr=0.0001, time_stamp=time_stamp)
+
+        # 先是1e-5进行30个epoch，然后变成1e-6来进行20个epoch
+        # model.train(sess=session, n_epochs=120, lr=0.01, time_stamp=time_stamp)
         # print('————————————————————改变为1e-6之后, 重新训练10个epoch————————————————————')
-        # model.kl_factor = 1e-6
+        # model.kl_factor = 2e-7
         # model.loss()
         # model.optimize()
         # model.evaluate()
         # model.eval_once(session, model.test_init, -1, None)
-        # model.train(sess=session, n_epochs=10, lr=0.01, time_stamp=time_stamp)
+        # model.train(sess=session, n_epochs=40, lr=0.01, time_stamp=time_stamp)

@@ -37,8 +37,8 @@ class VGG_Combined(BaseModel):
 
         if task_name in ['celeba', 'celeba1', 'celeba2']:
             self.imgs_path = self.config.dataset_path + 'celeba/'
-        elif task_name in ['deepfashion1', 'deepfashion2', 'deepfashion']:
-            self.imgs_path = self.config.dataset_path + 'deepfashion/'
+        elif task_name in ['lfw1', 'lfw2', 'lfw']:
+            self.imgs_path = self.config.dataset_path + 'lfw/'
         else:
             self.imgs_path = self.config.dataset_path + task_name + '/'
         # conv with biases and without bn
@@ -85,7 +85,7 @@ class VGG_Combined(BaseModel):
         else:
             # Use pre-train weights in conv, but init weights in fc
             self.weight_dict = self.construct_initial_weights(weight_a, weight_b, cluster_res_list)
-            print('[%s] Initialize weight matrix' % (datetime.now()))
+            print('[%s] Initialize weight matrix from weight_a and weight_b' % (datetime.now()))
             self.initial_weight = True
 
         if self.prune_method == 'info_bottle' and 'conv1_1/AB/info_bottle/mu' not in self.weight_dict.keys():
@@ -281,10 +281,16 @@ class VGG_Combined(BaseModel):
                              is_merge_bn=self.meta_val('is_merge_bn'))
 
         def get_ib(y, layer_type, kl_mult, partition_name):
+
+            if layer_type == 'C_ib':
+                mask_threshold = -1
+            elif layer_type == 'F_ib':
+                mask_threshold = 7
             if self.prune_method == 'info_bottle':
                 ib_layer = InformationBottleneckLayer(y, layer_type=layer_type, weight_dict=self.weight_dict,
                                                       is_training=self.is_training, kl_mult=kl_mult,
-                                                      mask_threshold=self.prune_threshold)
+                                                      # mask_threshold=self.prune_threshold)
+                                                      mask_threshold=mask_threshold)
                 self.layers.append(ib_layer)
                 y, ib_kld = ib_layer.layer_output
                 self.kl_total += ib_kld
@@ -810,11 +816,6 @@ class VGG_Combined(BaseModel):
                         np.around(accu, decimals=4))
                 self.save_weight(sess, save_path)
 
-            # if accu < 0.875:
-            #     count_86 -= 1
-            #     if count_86 <= 0:
-            #         break
-
     def test(self, sess):
         sess.run(self.test_init)
         total_loss = 0
@@ -886,7 +887,11 @@ class VGG_Combined(BaseModel):
                 # 和musks是一一对应的关系
                 layers_name_list += [layer.layer_name]
                 layers_type += [layer.layer_type]
-                masks += [layer.get_mask(threshold=self.prune_threshold)]
+                # # TODO: 为了调整实验结果
+                if layer.layer_type == 'C_ib':
+                    masks += [layer.get_mask(threshold=-1)]
+                elif layer.layer_type == 'F_ib':
+                    masks += [layer.get_mask(threshold=7)]
 
         # 获得具体的mask
         masks = sess.run(masks)

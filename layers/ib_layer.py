@@ -98,6 +98,7 @@ class InformationBottleneckLayer(BaseLayer):
 
         # [batch_size, dim]
         return tf.reshape(mu, shape=[1, -1]) + eps * tf.reshape(std, shape=[1, -1])
+        # return tf.reshape(mu, shape=[1, -1])
 
     def get_mask(self, threshold=0):
         # logalpha: [dim]

@@ -212,5 +212,27 @@ def construct_labels():
                                index=False, header=False)
 
 
+import os
+
 if __name__ == '__main__':
-    construct_labels()
+    content = pd.read_csv('/local/scratch/lfw_attributes.txt', sep='\t').values
+
+    name_and_index = content
+
+    data = list()
+    for line in content:
+        name = line[0]
+        index = line[1]
+        labels = line[2:]
+        img_path = '/local/scratch/lfw-deepfunneled/' + '{}_{:0>4}.jpg'.format(name.replace(' ', '_'),
+                                                                                             index)
+
+        if os.path.exists(img_path):
+            labels_res = (labels > 0).astype(int) * 2 - 1
+            data.append([img_path] + list(labels_res))
+        else:
+            print('{}不存在'.format(img_path))
+
+    # pd.DataFrame(data).to_csv('/local/scratch/labels_deepfunneled.txt', sep=' ', index=False, header=False)
+
+    print('fdfd')

@@ -9,5 +9,5 @@
   "weights_folder": "...",
   "prune_method": "info_bottle",
   "prune_threshold": 0.01,
-  "prune_kl_factor": 1e-6
+  "prune_kl_factor": 4e-5
 }

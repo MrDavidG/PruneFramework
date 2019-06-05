@@ -16,7 +16,7 @@ sys.path.append(r"/local/home/david/Remote/")
 
 from utils.mutual_information import kde_mi, bin_mi, kde_mi_independent, kde_mi_cus
 from models.vgg_combine import VGG_Combined
-from models.vgg_celeba import VGGNet
+from models.vgg_celeba_512 import VGGNet
 from utils.config import process_config
 from utils.mi_gpu import kde_gpu, get_K_function, kde_in_gpu
 from datetime import datetime
@@ -32,7 +32,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
 # gpu 0
-os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4eec6600-f5e3-f385-9b14-850ae9a2b236'
+# os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4eec6600-f5e3-f385-9b14-850ae9a2b236'
 
 
 # gpu 1
@@ -205,7 +205,7 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True
 
-    task_name = 'celeba'
+    task_name = 'lfw'
     print('[%s] Rebuild VGG model on task %s' % (datetime.now(), task_name))
 
     tf.reset_default_graph()
@@ -221,7 +221,8 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     model = VGG_Combined(config, task_name, weight_a, weight_b, cluster_res_list, signal_list, musk=False, gamma=gamma,
                          ib_threshold=ib_threshold,
                          # model_path=None)
-                         model_path='/local/home/david/Remote/models/model_weights/vgg512_combine_ib_celeba_0.01_0.8862-0.8939-0.8786_cr-0.0007_rdnet_30-1e-5+10-1e-6-individual')
+    model_path='/local/home/david/Remote/models/model_weights/vgg512_combine_ib_lfw_0.01_0.839-0.881-0.7969_cr-0.0006-120-epoch-4e-5')
+    # model_path='/local/home/david/Remote/models/model_weights/best_vgg512_combine_ib_celeba_0.01_0.8862-0.8939-0.8786_cr-0.0007_rdnet_30-1e-5+10-1e-6-individual')
     model.set_global_tensor(training, regularizer_zero, regularizer_decay, regularizer_zero)
     model.build()
 
@@ -236,19 +237,19 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     time_stamp = str(datetime.now())
 
     # Test
-    # model.get_CR(session, cluster_res_list, time_stamp)
+    model.get_CR(session, cluster_res_list, time_stamp)
 
-    # print('————————————————————kl_factor=1e-5, 训练30个epoch————————————————————')
-    # model.train(sess=session, n_epochs=30, task_name='AB', lr=0.01, time_stamp=time_stamp)
-    # print('————————————————————改变为1e-6之后, 重新训练10个epoch————————————————————')
-    # model.kl_factor = 1e-6
-    # model.loss()
-    # model.optimize()
-    # model.evaluate()
-    # model.eval_once(session, model.test_init, -1, time_stamp=time_stamp)
+    print('————————————————————kl_factor=4e-5, 训练120个epoch————————————————————')
+    # model.train(sess=session, n_epochs=120, task_name='AB', lr=0.01, time_stamp=time_stamp)
+    print('————————————————————改变为1e-6之后, 重新训练0个epoch————————————————————')
+    model.kl_factor = 1e-6
+    model.loss()
+    model.optimize()
+    model.evaluate()
+    model.eval_once(session, model.test_init, -1, time_stamp=time_stamp)
     # model.train(sess=session, n_epochs=10, task_name='AB', lr=0.01, time_stamp=time_stamp)
-    # print('————————————————————交替训练任务A和任务B共10次————————————————————')
-    # model.train_individual(sess=session, n_epochs=10, lr=0.01, time_stamp=time_stamp)
+    print('————————————————————交替训练任务A和任务B共40次————————————————————')
+    model.train_individual(sess=session, n_epochs=40, lr=0.01, time_stamp=time_stamp)
 
 
 def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_threshold_dict, method_mi, dim_list,
@@ -321,10 +322,10 @@ def combine_models(y_a, y_b, layer_output_list_1, layer_output_list_2, alpha_thr
     cluster_res_list += [cluster_layer_dict]
 
     # 载入之前的结果
-    for layer_index in layer_index_range:
-        cluster_res_list[layer_index] = pickle.load(open(
-            '/local/home/david/Remote/models/model_weights/cluster_results/cluster_res_for_layer-' + str(
-                layer_index) + '_alpha-0.4', 'rb'))
+    # for layer_index in layer_index_range:
+    #     cluster_res_list[layer_index] = pickle.load(open(
+    #         '/local/home/david/Remote/models/model_weights/cluster_results/cluster_res_for_layer-' + str(
+    #             layer_index) + '_alpha-0.5', 'rb'))
 
     # The main loop
     for layer_index in layer_index_range:
@@ -543,8 +544,8 @@ def get_connection_signal(cluster_res_list, dim_list):
     return signal_list
 
 
-def pruning(model_path_1, model_path_2, alpha_threshold_dict, method_mi, binsize, layer_index_range, gamma=10,
-            ib_threshold=0.01, regu_decay=0, if_rebuild=False, path_cluster_res_list=None):
+def pruning(task_name_1, model_path_1, task_name_2, model_path_2, alpha_threshold_dict, method_mi, binsize,
+            layer_index_range, gamma=10, ib_threshold=0.01, regu_decay=0, if_rebuild=False, path_cluster_res_list=None):
     """
 
     :param model_path_1:
@@ -567,8 +568,8 @@ def pruning(model_path_1, model_path_2, alpha_threshold_dict, method_mi, binsize
 
     if path_cluster_res_list is None:
         print('[%s] Obtain model weights, layers output and labels' % (datetime.now()))
-        weight_dict_a, layers_output_list_a, y_a, = get_layers_output('celeba1', model_path=model_path_1)
-        weight_dict_b, layers_output_list_b, y_b, = get_layers_output('celeba2', model_path=model_path_2)
+        weight_dict_a, layers_output_list_a, y_a, = get_layers_output(task_name_1, model_path=model_path_1)
+        weight_dict_b, layers_output_list_b, y_b, = get_layers_output(task_name_2, model_path=model_path_2)
 
         print('[%s] Divide neurons in each layer into clusters A, B and AB' % (datetime.now()))
         cluster_res_list = combine_models(y_a, y_b, layers_output_list_a, layers_output_list_b,
@@ -604,16 +605,19 @@ def pruning(model_path_1, model_path_2, alpha_threshold_dict, method_mi, binsize
                       ib_threshold=ib_threshold)
 
 
-def combine_cluster_res(alpha_conv, alpha_fc):
+def combine_cluster_res(alpha_conv, alpha_fc6, alpha_fc7):
     path = '/local/home/david/Remote/models/model_weights/cluster_results/'
     res = list()
     for i in range(15):
-        if i < 13:
+        if i <= 12:
             name = path + 'cluster_res_for_layer-' + str(i) + '_alpha-' + str(alpha_conv)
-        else:
-            name = path + 'cluster_res_for_layer-' + str(i) + '_alpha-' + str(alpha_fc)
+        elif i == 13:
+            name = path + 'cluster_res_for_layer-' + str(i) + '_alpha-' + str(alpha_fc6)
+        elif i == 14:
+            name = path + 'cluster_res_for_layer-' + str(i) + '_alpha-' + str(alpha_fc7)
+
         w = pickle.load(open(name, 'rb'))
-        w['AB'] = list(set(w['AB']) - set(w['B']))
+        w['AB'] = list(set(w['AB']) - set(w['A']) - set(w['B']))
         res += [w]
 
     cluster_layer_dict = dict()
@@ -622,7 +626,101 @@ def combine_cluster_res(alpha_conv, alpha_fc):
     cluster_layer_dict['AB'] = list()
     res += [cluster_layer_dict]
 
-    pickle.dump(res, open(path + 'cluster_results_' + str({'conv': alpha_conv, 'fc': alpha_fc}), 'wb'))
+    for i in range(9):
+        res[i]['A'] = []
+        res[i]['B'] = []
+
+
+    pickle.dump(res,
+                open(path + 'cluster_results_' + str({'conv': alpha_conv, 'fc6': alpha_fc6, 'fc7': alpha_fc7}), 'wb'))
+    print(path + 'cluster_results_' + str({'conv': alpha_conv, 'fc6': alpha_fc6, 'fc7': alpha_fc7}))
+
+def get_cluster_res_after_mask(cluster_res_list, ib_threshold, path_rdnet):
+    # 根据模型得到相应的结果
+    # get_mask的np版本
+    def get_mask(mu, logD, threshold=0):
+        # logalpha: [dim]
+        logalpha = logD - np.log(np.power(mu, 2) + 1e-8)
+        mask = logalpha < threshold
+        return mask
+
+    weight_rdnet = pickle.load(open(path_rdnet, 'rb'))
+
+    layer_name_lists = ['conv1_1', 'conv1_2',
+                        'conv2_1', 'conv2_2',
+                        'conv3_1', 'conv3_2', 'conv3_3',
+                        'conv4_1', 'conv4_2', 'conv4_3',
+                        'conv5_1', 'conv5_2', 'conv5_3',
+                        'fc6', 'fc7', 'fc8']
+
+    for layer_index, cluster_res_layer in enumerate(cluster_res_list):
+        if layer_index == 15:
+            break
+        layer_name = layer_name_lists[layer_index]
+        for cluster_name in ['A', 'AB', 'B']:
+            if len(cluster_res_layer.get(cluster_name, list())) != 0:
+                mu = weight_rdnet[layer_name + '/' + cluster_name + '/info_bottle/mu']
+                logD = weight_rdnet[layer_name + '/' + cluster_name + '/info_bottle/logD']
+                # 0的为屏蔽掉的，1的为保留的
+                mask = get_mask(mu, logD, ib_threshold)
+                # 直接在cluster_res_list上面做修改
+                mask_result = list(np.array(cluster_res_layer[cluster_name])[mask])
+                cluster_res_list[layer_index][cluster_name] = mask_result
+    return cluster_res_list
+
+
+def get_inference_time(model_path_1, model_path_2, gamma, ib_threshold, path_cluster_res_list, path_rdnet):
+    dim_list = [64, 64,
+                128, 128,
+                256, 256, 256,
+                512, 512, 512,
+                512, 512, 512,
+                512, 512, 20]
+
+    weight_a = pickle.load(open(model_path_1, 'rb'))
+    weight_b = pickle.load(open(model_path_2, 'rb'))
+    cluster_res_list = pickle.load(open(path_cluster_res_list, 'rb'))
+
+    # 根据musk来处理cluster_res_list
+    cluster_res_list = get_cluster_res_after_mask(cluster_res_list, ib_threshold, path_rdnet)
+
+    # 只有A的
+    for i in range(15):
+        cluster_res_list[i]['B'] = []
+    # 只有B的
+    # for i in range(15):
+    #     cluster_res_list[i]['A'] = []
+
+    signal_list = get_connection_signal(cluster_res_list, dim_list)
+
+    # build model
+    config = process_config("../configs/ib_vgg.json")
+    # config = process_config("../configs/vgg_net.json")
+    gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
+    gpu_config.gpu_options.allow_growth = True
+
+    task_name = 'lfw'
+    print('[%s] Rebuild VGG model on task %s' % (datetime.now(), task_name))
+
+    tf.reset_default_graph()
+    session = tf.Session(config=gpu_config)
+    # session = tf.InteractiveSession(config=gpu_config)
+
+    # Set training params
+    training = tf.placeholder(dtype=tf.bool, name='training')
+    regularizer_zero = tf.contrib.layers.l2_regularizer(scale=0.)
+    regularizer_decay = tf.contrib.layers.l2_regularizer(scale=0.)
+
+    model = VGG_Combined(config, task_name, weight_a, weight_b, cluster_res_list, signal_list, musk=False, gamma=gamma,
+                         ib_threshold=ib_threshold,
+                         model_path=None)
+
+    model.set_global_tensor(training, regularizer_zero, regularizer_decay, regularizer_zero)
+    model.build()
+    session.run(tf.global_variables_initializer())
+
+    model.eval_once(session, model.test_init, -1)
+    model.get_CR(session, cluster_res_list, None)
 
 
 if __name__ == '__main__':
@@ -631,17 +729,42 @@ if __name__ == '__main__':
     # 画每一层的MI直方图
     # draw_mi(path + 'vgg512_celeba2_0.892631_best')
 
-    pruning(model_path_1=path + 'best_vgg512_celeba1_0.907119',
-            model_path_2=path + 'best_vgg512_celeba2_0.892631',
-            alpha_threshold_dict={'conv': 0.2, 'fc': 8},
-            method_mi='kde_in',
-            binsize=0.05,
-            layer_index_range=[13, 14],
-            gamma=15,
-            ib_threshold=7,
-            if_rebuild=True,
-            # path_cluster_res_list=None)
-            path_cluster_res_list='/local/home/david/Remote/models/model_weights/cluster_results/cluster_results_{\'conv\': 0.2, \'fc\': 8}')
+    # rdnet方法 celeba
+    # pruning(task_name_1='celeba1',
+    #         model_path_1=path + 'best_vgg512_celeba1_0.907119',
+    #         task_name_2='celeba2',
+    #         model_path_2=path + 'best_vgg512_celeba2_0.892631',
+    #         alpha_threshold_dict={'conv': 0.2, 'fc': 8},
+    #         method_mi='kde_in',
+    #         binsize=0.05,
+    #         layer_index_range=[13, 14],
+    #         gamma=15,
+    #         ib_threshold=7,
+    #         if_rebuild=False,
+    #         path_cluster_res_list=None)
+    # path_cluster_res_list='/local/home/david/Remote/models/model_weights/cluster_results/cluster_results_{\'conv\': 0.2, \'fc\': 8}')
+
+    # rdnet方法 lfw
+    # pruning(task_name_1='lfw1',
+    #         model_path_1=path + 'vgg512_lfw1_0.9039',
+    #         task_name_2='lfw2',
+    #         model_path_2=path + 'vgg512_lfw2_0.833219',
+    #         alpha_threshold_dict={'conv': 0.2, 'fc': 5},
+    #         method_mi='kde_in',
+    #         binsize=0.05,
+    #         layer_index_range=[12],
+    #         gamma=25,
+    #         ib_threshold=0.01,
+    #         if_rebuild=True,
+    #         path_cluster_res_list='/local/home/david/Remote/models/model_weights/cluster_results/cluster_results_{\'conv\': 0, \'fc6\': 5, \'fc7\': 7}')
 
     # 合并每一层的cluster结果，并保存在/cluster_results目录下
-    # combine_cluster_res(alpha_conv=0.2, alpha_fc=8)
+    # combine_cluster_res(alpha_conv=0.2, alpha_fc6=5, alpha_fc7=7)
+
+    # 测试inference time
+    get_inference_time(model_path_1=path + 'vgg512_lfw1_0.9039',
+                       model_path_2=path + 'vgg512_lfw2_0.833219',
+                       gamma=25,
+                       ib_threshold=0.01,
+                       path_cluster_res_list='/local/home/david/Remote/models/model_weights/cluster_results/cluster_results_{\'conv\': 0, \'fc6\': 5, \'fc7\': 7}',
+                       path_rdnet='/local/home/david/Remote/models/model_weights/best_vgg512_combine_ib_lfw_0.01_0.8483-0.887-0.8096_cr-0.0033')

@@ -29,6 +29,9 @@ import tensorflow as tf
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
+# gpu 0
+os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4eec6600-f5e3-f385-9b14-850ae9a2b236'
+
 
 class VGG_InferenceTime(BaseModel):
     def __init__(self, config, task_name, weight_original, mask_res_list, musk=False, ib_threshold=None):
@@ -139,8 +142,6 @@ class VGG_InferenceTime(BaseModel):
         with tf.variable_scope(self.task_name, reuse=tf.AUTO_REUSE):
             y = self.X
 
-            self.kl_total = 0.
-
             # the name of the layer and the coefficient of the kl divergence
             for layer_name in ['conv1_1', 'conv1_2', 'pooling',
                                'conv2_1', 'conv2_2', 'pooling',
@@ -237,7 +238,7 @@ class VGG_InferenceTime(BaseModel):
 class VGG_InferenceTime_Combine(BaseModel):
     def __init__(self, config, task_name, weight_dict_1, weight_dict_2, mask_res_list_1, mask_res_list_2, musk=False,
                  ib_threshold=None):
-        super(VGG_InferenceTime, self).__init__(config)
+        super(VGG_InferenceTime_Combine, self).__init__(config)
 
         if task_name in ['celeba', 'celeba1', 'celeba2']:
             self.imgs_path = self.config.dataset_path + 'celeba/'
@@ -251,17 +252,57 @@ class VGG_InferenceTime_Combine(BaseModel):
         self.task_name = task_name
         self.is_musked = musk
 
+        self.op_logits_1 = None
+        self.op_logits_2 = None
+
+        self.op_accuracy_1 = None
+        self.op_accuracy_2 = None
+
         if self.prune_method == 'info_bottle':
             self.prune_threshold = ib_threshold
 
         self.load_dataset()
         self.n_classes = self.Y.shape[1]
 
-        self.weight_dict = self.construct_initial_weights(weight_dict_1, weight_dict_2, mask_res_list_1,
+        self.weight_dict = self.construct_initial_weights(weight_dict_1, weight_dict_2,
+                                                          mask_res_list_1,
                                                           mask_res_list_2)
 
     def construct_initial_weights(self, weight_dict_1, weight_dict_2, mask_res_list_1, mask_res_list_2):
+        # 分别得到两个模型进行mask之后的结果
+        w1 = self.get_weight_dict_after_mask(weight_dict_1, mask_res_list_1)
+        w2 = self.get_weight_dict_after_mask(weight_dict_2, mask_res_list_2)
+        # 这里是已经运行完了mask之后的结果
 
+        # Rename
+        weight_dict = dict()
+        for layer in ['conv1_1', 'conv1_2',
+                      'conv2_1', 'conv2_2',
+                      'conv3_1', 'conv3_2', 'conv3_3',
+                      'conv4_1', 'conv4_2', 'conv4_3',
+                      'conv5_1', 'conv5_2', 'conv5_3',
+                      'fc6', 'fc7', 'fc8']:
+            weight_dict[layer + '/1/weights'] = w1[layer + '/weights']
+            weight_dict[layer + '/1/biases'] = w1[layer + '/biases']
+            if layer != 'fc8':
+                weight_dict[layer + '/1/info_bottle/mu'] = w1[layer + '/info_bottle/mu']
+                weight_dict[layer + '/1/info_bottle/logD'] = w1[layer + '/info_bottle/logD']
+
+        for layer in ['conv1_1', 'conv1_2',
+                      'conv2_1', 'conv2_2',
+                      'conv3_1', 'conv3_2', 'conv3_3',
+                      'conv4_1', 'conv4_2', 'conv4_3',
+                      'conv5_1', 'conv5_2', 'conv5_3',
+                      'fc6', 'fc7', 'fc8']:
+            weight_dict[layer + '/2/weights'] = w2[layer + '/weights']
+            weight_dict[layer + '/2/biases'] = w2[layer + '/biases']
+            if layer != 'fc8':
+                weight_dict[layer + '/2/info_bottle/mu'] = w2[layer + '/info_bottle/mu']
+                weight_dict[layer + '/2/info_bottle/logD'] = w2[layer + '/info_bottle/logD']
+
+        weight_dict['is_merge_bn'] = True
+
+        return weight_dict
 
     def get_weight_dict_after_mask(self, weight_original, mask_res_list):
 
@@ -346,10 +387,8 @@ class VGG_InferenceTime_Combine(BaseModel):
         self.layers.clear()
 
         with tf.variable_scope(self.task_name, reuse=tf.AUTO_REUSE):
-            y = self.X
-
-            self.kl_total = 0.
-
+            # model 1
+            y1 = self.X
             # the name of the layer and the coefficient of the kl divergence
             for layer_name in ['conv1_1', 'conv1_2', 'pooling',
                                'conv2_1', 'conv2_2', 'pooling',
@@ -357,30 +396,66 @@ class VGG_InferenceTime_Combine(BaseModel):
                                'conv4_1', 'conv4_2', 'conv4_3', 'pooling',
                                'conv5_1', 'conv5_2', 'conv5_3', 'pooling']:
                 if layer_name != 'pooling':
-                    with tf.variable_scope(layer_name):
-                        conv = get_conv(y, regu_conv=self.regularizer_conv)
+                    with tf.variable_scope(layer_name + '/1'):
+                        conv = get_conv(y1, self.regularizer_conv)
                         self.layers.append(conv)
-                        y = tf.nn.relu(conv.layer_output)
-                        y = get_ib(y, 'C_ib', 1.)
+                        y1 = tf.nn.relu(conv.layer_output)
+                        y1 = get_ib(y1, 'C_ib', 1.)
                 else:
-                    y = tf.nn.max_pool(y, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
+                    y1 = tf.nn.max_pool(y1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
 
             # From conv to fc layer
-            y = tf.contrib.layers.flatten(y)
+            y1 = tf.contrib.layers.flatten(y1)
 
             for fc_name in ['fc6', 'fc7']:
-                with tf.variable_scope(fc_name):
-                    fc_layer = FullConnectedLayer(y, self.weight_dict, regularizer_fc=self.regularizer_fc)
+                with tf.variable_scope(fc_name + '/1'):
+                    fc_layer = FullConnectedLayer(y1, self.weight_dict, regularizer_fc=self.regularizer_fc)
                     self.layers.append(fc_layer)
-                    y = tf.nn.relu(fc_layer.layer_output)
-                    y = get_ib(y, 'F_ib', 1.)
+                    y1 = tf.nn.relu(fc_layer.layer_output)
+                    y1 = get_ib(y1, 'F_ib', 1.)
 
-            with tf.variable_scope('fc8'):
-                fc_layer = FullConnectedLayer(y, self.weight_dict, regularizer_fc=self.regularizer_fc)
+            with tf.variable_scope('fc8' + '/1'):
+                fc_layer = FullConnectedLayer(y1, self.weight_dict, regularizer_fc=self.regularizer_fc)
                 self.layers.append(fc_layer)
-                y = fc_layer.layer_output
+                y1 = fc_layer.layer_output
 
-            self.op_logits = tf.nn.tanh(y)
+            self.op_logits_1 = tf.nn.tanh(y1)
+
+            # model 2
+            y2 = self.X
+            # the name of the layer and the coefficient of the kl divergence
+            for layer_name in ['conv1_1', 'conv1_2', 'pooling',
+                               'conv2_1', 'conv2_2', 'pooling',
+                               'conv3_1', 'conv3_2', 'conv3_3', 'pooling',
+                               'conv4_1', 'conv4_2', 'conv4_3', 'pooling',
+                               'conv5_1', 'conv5_2', 'conv5_3', 'pooling']:
+                if layer_name != 'pooling':
+                    with tf.variable_scope(layer_name + '/2'):
+                        conv = get_conv(y2, self.regularizer_conv)
+                        self.layers.append(conv)
+                        y2 = tf.nn.relu(conv.layer_output)
+                        y2 = get_ib(y2, 'C_ib', 1.)
+                else:
+                    y2 = tf.nn.max_pool(y2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID')
+
+            # From conv to fc layer
+            y2 = tf.contrib.layers.flatten(y2)
+
+            for fc_name in ['fc6', 'fc7']:
+                with tf.variable_scope(fc_name + '/2'):
+                    fc_layer = FullConnectedLayer(y2, self.weight_dict, regularizer_fc=self.regularizer_fc)
+                    self.layers.append(fc_layer)
+                    y2 = tf.nn.relu(fc_layer.layer_output)
+                    y2 = get_ib(y2, 'F_ib', 1.)
+
+            with tf.variable_scope('fc8' + '/2'):
+                fc_layer = FullConnectedLayer(y2, self.weight_dict, regularizer_fc=self.regularizer_fc)
+                self.layers.append(fc_layer)
+                y2 = fc_layer.layer_output
+
+            self.op_logits_2 = tf.nn.tanh(y2)
+
+            self.op_logits = tf.nn.tanh(tf.concat((y1, y2), axis=1))
 
     def evaluate(self):
         with tf.name_scope('predict'):
@@ -405,23 +480,23 @@ class VGG_InferenceTime_Combine(BaseModel):
         self.regularizer_conv = regu_conv
         self.regularizer_fc = regu_fc
 
-    def fetch_weight(self, sess):
-        """
-        get all the parameters, including the
-        :param sess:
-        :return:
-        """
-        weight_dict = dict()
-        weight_list = list()
-        for layer in self.layers:
-            weight_list.append(layer.get_params(sess))
-        for params_dict in weight_list:
-            for k, v in params_dict.items():
-                weight_dict[k.split(':')[0]] = v
-        for meta_key in self.meta_keys_with_default_val.keys():
-            meta_key_in_weight = meta_key
-            weight_dict[meta_key_in_weight] = self.meta_val(meta_key)
-        return weight_dict
+    # def fetch_weight(self, sess):
+    #     """
+    #     get all the parameters, including the
+    #     :param sess:
+    #     :return:
+    #     """
+    #     weight_dict = dict()
+    #     weight_list = list()
+    #     for layer in self.layers:
+    #         weight_list.append(layer.get_params(sess))
+    #     for params_dict in weight_list:
+    #         for k, v in params_dict.items():
+    #             weight_dict[k.split(':')[0]] = v
+    #     for meta_key in self.meta_keys_with_default_val.keys():
+    #         meta_key_in_weight = meta_key
+    #         weight_dict[meta_key_in_weight] = self.meta_val(meta_key)
+    #     return weight_dict
 
     def eval_once(self, sess, init, epoch):
         sess.run(init)
@@ -525,10 +600,52 @@ def get_inference_time(ib_threshold, n_class, task_name, model_path):
     model.eval_once(session, model.test_init, -1)
 
 
+def get_inference_time_two(ib_threshold, n_class, task_name, model_path_1, model_path_2):
+    weight_dict_1, mask_res_list_1 = get_mask_result(model_path=model_path_1, n_class=n_class,
+                                                     ib_threshold=ib_threshold)
+    weight_dict_2, mask_res_list_2 = get_mask_result(model_path=model_path_2, n_class=n_class,
+                                                     ib_threshold=ib_threshold)
+
+    # 接下来进行重新inference
+    config = process_config("../configs/ib_vgg.json")
+
+    gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
+    gpu_config.gpu_options.allow_growth = True
+
+    print('Training on task {:s}'.format(task_name))
+    tf.reset_default_graph()
+    # session for training
+
+    session = tf.Session(config=gpu_config)
+
+    training = tf.placeholder(dtype=tf.bool, name='training')
+
+    regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.00)
+    regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.00)
+
+    # Train
+    model = VGG_InferenceTime_Combine(config, task_name, weight_dict_1, weight_dict_2, mask_res_list_1, mask_res_list_2,
+                                      musk=False, ib_threshold=10000)
+    model.set_global_tensor(training, regularizer_conv, regularizer_fc)
+    model.build()
+
+    session.run(tf.global_variables_initializer())
+
+    model.eval_once(session, model.test_init, -1)
+
+
 if __name__ == '__main__':
+    # 测试一个模型的效果
     get_inference_time(ib_threshold=0.01,
                        n_class=20,
                        task_name='celeba1',
-                       model_path='/local/home/david/Remote/models/model_weights/best_vgg512_ib_celeba1_0.01_0.895017_cr-0.01538')
+                       # model_path='/local/home/david/Remote/models/model_weights/best_vgg512_ib_celeba1_0.01_0.895017_cr-0.01538')
     # model_path = '/local/home/david/Remote/models/model_weights/best_vgg512_ib_celeba2_0.01_0.879943_cr-0.01257')
-    # model_path = '/local/home/david/Remote/models/model_weights/best_vgg512_ib_celeba_0.01_0.884827_cr-0.01738')
+    model_path = '/local/home/david/Remote/models/model_weights/best_vgg512_ib_celeba_0.01_0.884827_cr-0.01738')
+
+    # 测试两个模型同时的效果
+    # get_inference_time_two(ib_threshold=0.01,
+    #                        n_class=20,
+    #                        task_name='celeba',
+    #                        model_path_1='/local/home/david/Remote/models/model_weights/best_vgg512_ib_celeba1_0.01_0.895017_cr-0.01538',
+    #                        model_path_2='/local/home/david/Remote/models/model_weights/best_vgg512_ib_celeba2_0.01_0.879943_cr-0.01257')
