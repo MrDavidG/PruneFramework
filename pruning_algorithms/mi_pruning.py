@@ -17,7 +17,7 @@ sys.path.append(r"/local/home/david/Remote/")
 from utils.mutual_information import kde_mi, bin_mi, kde_mi_independent, kde_mi_cus
 from models.vgg_combine import VGG_Combined
 from models.vgg_celeba_512 import VGGNet
-from utils.config import process_config
+from utils.configer import load_cfg
 from utils.mi_gpu import kde_gpu, get_K_function, kde_in_gpu
 from datetime import datetime
 
@@ -189,7 +189,8 @@ def argmin_marginal_mi(layer_output, F, neuron_list_previous, labelixs, method_m
     return min_index_neuron, mi_min
 
 
-def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu_decay, ib_threshold):
+def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, batch_size, prune_method, gamma_conv, gamma_fc,
+                  prune_threshold, prune_kl_factor):
     """
     Rebuild the combined model and train.
     :param weight_a: weight dictionary of model a
@@ -200,8 +201,8 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     :param regu_decay: regularizer for A->AB and B->AB
     :return:
     """
-    config = process_config("../configs/ib_vgg.json")
-    # config = process_config("../configs/vgg_net.json")
+    config = process_config("../config/config.json")
+    # config = process_config("../config/vgg_net.json")
     gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True
 
@@ -215,15 +216,15 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     # Set training params
     training = tf.placeholder(dtype=tf.bool, name='training')
     regularizer_zero = tf.contrib.layers.l2_regularizer(scale=0.)
-    regularizer_decay = tf.contrib.layers.l2_regularizer(scale=regu_decay * 1.)
 
     # Rebuild model
-    model = VGG_Combined(config, task_name, weight_a, weight_b, cluster_res_list, signal_list, musk=False, gamma=gamma,
-                         ib_threshold=ib_threshold,
-                         # model_path=None)
-    model_path='/local/home/david/Remote/models/model_weights/vgg512_combine_ib_lfw_0.01_0.839-0.881-0.7969_cr-0.0006-120-epoch-4e-5')
-    # model_path='/local/home/david/Remote/models/model_weights/best_vgg512_combine_ib_celeba_0.01_0.8862-0.8939-0.8786_cr-0.0007_rdnet_30-1e-5+10-1e-6-individual')
-    model.set_global_tensor(training, regularizer_zero, regularizer_decay, regularizer_zero)
+    model = VGG_Combined(config, task_name, weight_a, weight_b, cluster_res_list, signal_list, musk=False,
+                         batch_size=batch_size,
+                         path_model='/local/home/david/Remote/models/model_weights/vgg512_combine_ib_lfw_0.01_0.839-0.881-0.7969_cr-0.0006-120-epoch-4e-5',
+                         prune_method=prune_method, gamma_conv=gamma_conv, gamma_fc=gamma_fc,
+                         prune_threshold=prune_threshold, prune_kl_factor=prune_kl_factor)
+
+    model.set_global_tensor(training, regularizer_zero, regularizer_zero)
     model.build()
 
     # Train
@@ -441,7 +442,10 @@ def get_layers_output(task_name, model_path, with_relu=True):
     :param model_path:
     :return:
     """
-    config = process_config("../configs/vgg_for_layer_output.json")
+
+    config = load_cfg('/'.join(model_path.split('/')[:-1]) + '/cfg.ini')
+    # config = process_config("../config/vgg_for_layer_output.json")
+
     gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True
 
@@ -451,19 +455,14 @@ def get_layers_output(task_name, model_path, with_relu=True):
 
     sess = tf.Session(config=gpu_config)
 
-    # Set training params
-    training = tf.placeholder(dtype=tf.bool, name='training')
-    regularizer_zero = tf.contrib.layers.l2_regularizer(scale=0.)
-
     # Obtain model
-    model = VGGNet(config, task_name, model_path=model_path)
-    model.set_global_tensor(training, regularizer_zero, regularizer_zero)
+    config['path']['path_load'] = model_path
+    model = VGGNet(config)
     model.inference()
 
     sess.run(tf.global_variables_initializer())
     sess.run(model.train_init)
 
-    # layers_output_tf = [layer.layer_output for layer in model.layers[:-1]]
     layers_output_tf = [layer.layer_output for layer in model.layers]
     layers_output, labels = sess.run([layers_output_tf] + [model.Y], feed_dict={model.is_training: False})
 
@@ -630,10 +629,10 @@ def combine_cluster_res(alpha_conv, alpha_fc6, alpha_fc7):
         res[i]['A'] = []
         res[i]['B'] = []
 
-
     pickle.dump(res,
                 open(path + 'cluster_results_' + str({'conv': alpha_conv, 'fc6': alpha_fc6, 'fc7': alpha_fc7}), 'wb'))
     print(path + 'cluster_results_' + str({'conv': alpha_conv, 'fc6': alpha_fc6, 'fc7': alpha_fc7}))
+
 
 def get_cluster_res_after_mask(cluster_res_list, ib_threshold, path_rdnet):
     # 根据模型得到相应的结果
@@ -694,8 +693,8 @@ def get_inference_time(model_path_1, model_path_2, gamma, ib_threshold, path_clu
     signal_list = get_connection_signal(cluster_res_list, dim_list)
 
     # build model
-    config = process_config("../configs/ib_vgg.json")
-    # config = process_config("../configs/vgg_net.json")
+    config = process_config("../config/config.json")
+    # config = process_config("../config/vgg_net.json")
     gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True
 
@@ -704,18 +703,9 @@ def get_inference_time(model_path_1, model_path_2, gamma, ib_threshold, path_clu
 
     tf.reset_default_graph()
     session = tf.Session(config=gpu_config)
-    # session = tf.InteractiveSession(config=gpu_config)
 
-    # Set training params
-    training = tf.placeholder(dtype=tf.bool, name='training')
-    regularizer_zero = tf.contrib.layers.l2_regularizer(scale=0.)
-    regularizer_decay = tf.contrib.layers.l2_regularizer(scale=0.)
+    model = VGG_Combined(config, weight_a, weight_b, cluster_res_list, signal_list)
 
-    model = VGG_Combined(config, task_name, weight_a, weight_b, cluster_res_list, signal_list, musk=False, gamma=gamma,
-                         ib_threshold=ib_threshold,
-                         model_path=None)
-
-    model.set_global_tensor(training, regularizer_zero, regularizer_decay, regularizer_zero)
     model.build()
     session.run(tf.global_variables_initializer())
 

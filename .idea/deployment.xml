@@ -5,14 +5,7 @@
       <paths name="EtzServer">
         <serverdata>
           <mappings>
-            <mapping deploy="/" local="$PROJECT_DIR$" />
-          </mappings>
-        </serverdata>
-      </paths>
-      <paths name="LabServer">
-        <serverdata>
-          <mappings>
-            <mapping deploy="/" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/PruneFramework" local="$PROJECT_DIR$" />
           </mappings>
         </serverdata>
       </paths>

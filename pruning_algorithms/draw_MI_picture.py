@@ -15,7 +15,7 @@ import sys
 
 sys.path.append(r"/local/home/david/Remote/")
 from pruning_algorithms.relevancy_pruning import bins, get_mutual_information
-from utils.config import process_config
+from utils.configer import process_config
 from models.vgg_cifar100 import VGGNet
 from models.resnet_model import ResNet
 from models.dense_model import DenseNet
@@ -197,8 +197,8 @@ def get_relu_max(sess, task_name, model):
 
 if __name__ == '__main__':
     # Obtain a pre-train model
-    config = process_config("../configs/rb_vgg.json")
-    # config = process_config("../configs/res_net.json")
+    config = process_config("../config/rb_vgg.json")
+    # config = process_config("../config/res_net.json")
     # apply video memory dynamically
     gpu_config = tf.ConfigProto(intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True

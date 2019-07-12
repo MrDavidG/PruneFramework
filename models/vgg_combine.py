@@ -17,11 +17,11 @@ from models.base_model import BaseModel
 from layers.conv_layer import ConvLayer
 from layers.fc_layer import FullConnectedLayer
 from layers.ib_layer import InformationBottleneckLayer
-from utils.config import process_config
-from datetime import datetime
+from utils.logger import *
 
 import numpy as np
 import pickle
+import json
 import time
 
 import os
@@ -31,30 +31,15 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
 class VGG_Combined(BaseModel):
-    def __init__(self, config, task_name, weight_a, weight_b, cluster_res_list, signal_list, musk=False, gamma=1.,
-                 ib_threshold=None, model_path=None):
-        super(VGG_Combined, self).__init__(config)
+    def __init__(self, config, weight_a, weight_b, cluster_res_list, signal_list):
 
-        if task_name in ['celeba', 'celeba1', 'celeba2']:
-            self.imgs_path = self.config.dataset_path + 'celeba/'
-        elif task_name in ['lfw1', 'lfw2', 'lfw']:
-            self.imgs_path = self.config.dataset_path + 'lfw/'
-        else:
-            self.imgs_path = self.config.dataset_path + task_name + '/'
-        # conv with biases and without bn
-        self.meta_keys_with_default_val = {"is_merge_bn": True}
+        super(VGG_Combined, self).__init__(config)
 
         self.cluster_res_list = cluster_res_list
 
-        self.task_name = task_name
-        self.is_musked = musk
-        self.gamma = gamma
+        self.is_musked = False
 
-        if self.prune_method == 'info_bottle' and ib_threshold is not None:
-            print('-----------------------重新设置ib_threshold为{}-----------------------'.format(ib_threshold))
-            self.prune_threshold = ib_threshold
-
-        if self.prune_method == 'info_bottle':
+        if self.cfg['basic']['pruning_method'] == 'info_bottle':
             self.kl_total_a = None
             self.kl_total_b = None
 
@@ -73,24 +58,25 @@ class VGG_Combined(BaseModel):
         self.load_dataset()
         self.n_classes = self.Y.shape[1]
 
-        self.regularizer_decay = None
-
         self.signal_list = signal_list
 
-        if model_path and os.path.exists(model_path):
+        if self.cfg['path']['path_load'] and os.path.exists(self.cfg['path']['path_load']):
             # Directly load all weights
-            self.weight_dict = pickle.load(open(model_path, 'rb'))
-            print('[%s] Loading weight matrix in %s' % (datetime.now(), model_path))
+            self.weight_dict = pickle.load(open(self.cfg['path']['path_load'], 'rb'))
+            log_l('Loading weights in %s' % self.cfg['path']['path_load'])
             self.initial_weight = False
         else:
             # Use pre-train weights in conv, but init weights in fc
             self.weight_dict = self.construct_initial_weights(weight_a, weight_b, cluster_res_list)
-            print('[%s] Initialize weight matrix from weight_a and weight_b' % (datetime.now()))
+            log_l('Initialize weight matrix from weight a and b')
             self.initial_weight = True
 
-        if self.prune_method == 'info_bottle' and 'conv1_1/AB/info_bottle/mu' not in self.weight_dict.keys():
-            print('-----------------------初始化ib层权重-----------------------')
+        if self.cfg['basic'][
+            'pruning_method'] == 'info_bottle' and 'conv1_1/AB/info_bottle/mu' not in self.weight_dict.keys():
+            log_l('Initialize ib params')
             self.weight_dict = dict(self.weight_dict, **self.construct_initial_weights_ib(cluster_res_list))
+
+        self.build()
 
     def construct_initial_weights(self, weight_dict_a, weight_dict_b, cluster_res_list):
         dim_list = [64, 64,
@@ -263,8 +249,7 @@ class VGG_Combined(BaseModel):
 
     def get_conv(self, x, regu_conv):
         return ConvLayer(x, self.weight_dict, is_dropout=False, is_training=self.is_training,
-                         is_musked=self.is_musked, regularizer_conv=regu_conv,
-                         is_merge_bn=self.meta_val('is_merge_bn'))
+                         is_musked=self.is_musked, regularizer_conv=regu_conv)
 
     def inference(self):
         """
@@ -277,19 +262,16 @@ class VGG_Combined(BaseModel):
 
         def get_conv(x, regu_conv):
             return ConvLayer(x, self.weight_dict, is_dropout=False, is_training=self.is_training,
-                             is_musked=self.is_musked, regularizer_conv=regu_conv,
-                             is_merge_bn=self.meta_val('is_merge_bn'))
+                             is_musked=self.is_musked, regularizer_conv=regu_conv)
 
         def get_ib(y, layer_type, kl_mult, partition_name):
-
             if layer_type == 'C_ib':
-                mask_threshold = -1
+                mask_threshold = self.cfg['pruning']['prune_threshold_conv']
             elif layer_type == 'F_ib':
-                mask_threshold = 7
-            if self.prune_method == 'info_bottle':
+                mask_threshold = self.cfg['pruning']['prune_threshold_fc']
+            if self.cfg['basic']['pruning_method'] == 'info_bottle':
                 ib_layer = InformationBottleneckLayer(y, layer_type=layer_type, weight_dict=self.weight_dict,
                                                       is_training=self.is_training, kl_mult=kl_mult,
-                                                      # mask_threshold=self.prune_threshold)
                                                       mask_threshold=mask_threshold)
                 self.layers.append(ib_layer)
                 y, ib_kld = ib_layer.layer_output
@@ -322,6 +304,8 @@ class VGG_Combined(BaseModel):
                               ('conv5_1', 2.0 / 1), ('conv5_2', 2.0 / 1), ('conv5_3', 2.0 / 1), 'pooling']:
                 if layer_index == 0:
                     conv_name, kl_mult = layer_set
+                    if self.cfg['basic']['pruning_method']:
+                        kl_mult *= self.cfg['pruning'].getfloat('gamma_conv')
 
                     # 如果有A部分的话才进行连接
                     if get_signal(layer_index, 'A'):
@@ -350,6 +334,8 @@ class VGG_Combined(BaseModel):
 
                 elif layer_set != 'pooling':
                     conv_name, kl_mult = layer_set
+                    if self.cfg['basic']['pruning_method']:
+                        kl_mult *= self.cfg['pruning'].getfloat('gamma_conv')
 
                     # A
                     if get_signal(layer_index, 'A'):
@@ -459,7 +445,7 @@ class VGG_Combined(BaseModel):
                         self.layers.append(fc_layer)
                         y_A = tf.nn.relu(fc_layer.layer_output)
 
-                        y_A = get_ib(y_A, 'F_ib', self.gamma, 'A')
+                        y_A = get_ib(y_A, 'F_ib', self.cfg['pruning'].getfloat('gamma_fc'), 'A')
 
                 # AB
                 if get_signal(layer_index, 'AB'):
@@ -472,7 +458,7 @@ class VGG_Combined(BaseModel):
 
                             y_AB = tf.nn.relu(fc_layer_AB.layer_output)
 
-                            y_AB = get_ib(y_AB, 'F_ib', self.gamma, 'AB')
+                            y_AB = get_ib(y_AB, 'F_ib', self.cfg['pruning'].getfloat('gamma_fc'), 'AB')
 
                 # B
                 if get_signal(layer_index, 'B'):
@@ -489,7 +475,7 @@ class VGG_Combined(BaseModel):
                         self.layers.append(fc_layer)
                         y_B = tf.nn.relu(fc_layer.layer_output)
 
-                        y_B = get_ib(y_B, 'F_ib', self.gamma, 'B')
+                        y_B = get_ib(y_B, 'F_ib', self.cfg['pruning'].getfloat('gamma_fc'), 'B')
 
                 # Record the output of last layer
                 if get_signal(layer_index, 'A'):
@@ -541,7 +527,7 @@ class VGG_Combined(BaseModel):
         l2_loss = tf.losses.get_regularization_loss()
 
         # for the pruning method
-        if self.prune_method == 'info_bottle':
+        if self.cfg['basic']['pruning_method'] == 'info_bottle':
             self.op_loss = mae_loss + l2_loss + self.kl_factor * self.kl_total
             self.op_loss_a = mae_loss_a + l2_loss + self.kl_factor * self.kl_total_a
             self.op_loss_b = mae_loss_b + l2_loss + self.kl_factor * self.kl_total_b
@@ -550,13 +536,13 @@ class VGG_Combined(BaseModel):
             self.op_loss_a = mae_loss_a + l2_loss
             self.op_loss_b = mae_loss_b + l2_loss
 
-    def optimize(self):
+    def optimize(self, lr):
         # 为了让bn中的\miu, \delta滑动平均
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
         with tf.control_dependencies(update_ops):
             with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
                 # Create a optimizer
-                self.opt = tf.train.MomentumOptimizer(learning_rate=self.config.learning_rate, momentum=0.9,
+                self.opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=0.9,
                                                       use_nesterov=True)
 
                 self.op_opt = self.opt.minimize(self.op_loss)
@@ -578,21 +564,12 @@ class VGG_Combined(BaseModel):
             self.op_accuracy_b = tf.reduce_sum(tf.cast(correct_preds_b, tf.float32)) / tf.cast(tf.shape(self.Y)[1] / 2,
                                                                                                tf.float32)
 
-    def build(self, weight_dict=None, share_scope=None, is_merge_bn=False):
-        # dont need to merge bn
-        if is_merge_bn and not self.meta_val('is_merge_bn'):
-            self.merge_batch_norm_to_conv()
-            self.set_meta_val('is_merge_bn', is_merge_bn)
-
-        if weight_dict:
-            self.weight_dict = weight_dict
-            self.share_scope = share_scope
+    def build(self):
         self.inference()
         self.loss()
-        self.optimize()
         self.evaluate()
 
-    def train_one_epoch(self, sess, init, epoch, step, task_name, time_stamp):
+    def train_one_epoch(self, sess, init, epoch, step, task_name):
         sess.run(init)
         total_loss = 0
         total_kl = 0
@@ -609,7 +586,7 @@ class VGG_Combined(BaseModel):
 
         try:
             while True:
-                if self.prune_method == 'info_bottle':
+                if self.cfg['basic']['pruning_method'] == 'info_bottle':
                     _, loss, kl = sess.run([op_opt, self.op_loss, self.kl_total], feed_dict={self.is_training: True})
                     total_kl += kl
                 else:
@@ -633,17 +610,8 @@ class VGG_Combined(BaseModel):
         except tf.errors.OutOfRangeError:
             pass
 
-        # 写文件
-        with open('/local/home/david/Remote/models/model_weights/log_vgg_combine_' + time_stamp, 'a+') as f:
-            f.write(str_ + '\n')
-
+        log(str_, need_print=False)
         return step
-
-    def set_global_tensor(self, training_tensor, regu_conv, regu_decay, regu_fc):
-        self.is_training = training_tensor
-        self.regularizer_conv = regu_conv
-        self.regularizer_decay = regu_decay
-        self.regularizer_fc = regu_fc
 
     def fetch_weight(self, sess):
         """
@@ -658,12 +626,9 @@ class VGG_Combined(BaseModel):
         for params_dict in weight_list:
             for k, v in params_dict.items():
                 weight_dict[k.split(':')[0]] = v
-        for meta_key in self.meta_keys_with_default_val.keys():
-            meta_key_in_weight = meta_key
-            weight_dict[meta_key_in_weight] = self.meta_val(meta_key)
         return weight_dict
 
-    def eval_once(self, sess, init, epoch, time_stamp=None):
+    def eval_once(self, sess, init, epoch):
         sess.run(init)
         total_loss = 0
         total_correct_preds = 0
@@ -696,13 +661,11 @@ class VGG_Combined(BaseModel):
         print('\n' + str_)
 
         # 写文件
-        if time_stamp is not None:
-            with open('/local/home/david/Remote/models/model_weights/log_vgg_combine_' + time_stamp, 'a+') as f:
-                f.write(str_ + '\n')
+        log(str_)
 
         return accu, accu_a, accu_b
 
-    def train_one_epoch_individual(self, sess, init, epoch, step, time_stamp):
+    def train_one_epoch_individual(self, sess, init, epoch, step):
         sess.run(init)
         total_loss_a = 0
         total_loss_b = 0
@@ -710,15 +673,11 @@ class VGG_Combined(BaseModel):
         total_kl_b = 0
         n_batches = 0
 
-        # 写文件
-        with open('/local/home/david/Remote/models/model_weights/log_vgg_combine_' + time_stamp, 'a+') as f:
-            f.write('' + '\n')
-
         time_last = time.time()
 
         try:
             while True:
-                if self.prune_method == 'info_bottle':
+                if self.cfg['basic']['pruning_method'] == 'info_bottle':
                     _, loss_a, kl_a = sess.run([self.op_opt_a, self.op_loss_a, self.kl_total_a],
                                                feed_dict={self.is_training: True})
                     total_kl_a += kl_a
@@ -752,69 +711,77 @@ class VGG_Combined(BaseModel):
             pass
 
         # 写文件
-        with open('/local/home/david/Remote/models/model_weights/log_vgg_combine_' + time_stamp, 'a+') as f:
-            f.write(str_ + '\n')
-
+        log(str_, need_print=False)
         return step
 
-    def train_individual(self, sess, n_epochs, lr, time_stamp):
-        if lr is not None:
-            self.config.learning_rate = lr
-            self.optimize()
+    def train_individual(self, sess, n_epochs, lr):
+        self.optimize(lr)
 
         sess.run(tf.variables_initializer(self.opt.variables()))
         step = self.global_step_tensor.eval(session=sess)
         for epoch in range(n_epochs):
-            step = self.train_one_epoch_individual(sess, self.train_init, epoch, step, time_stamp)
-            accu, accu_a, accu_b = self.eval_once(sess, self.test_init, epoch, time_stamp)
+            step = self.train_one_epoch_individual(sess, self.train_init, epoch, step)
+            acc, acc_a, acc_b = self.eval_once(sess, self.test_init, epoch)
 
-            if self.prune_method == 'info_bottle':
-                cr = self.get_CR(sess, self.cluster_res_list, time_stamp)
+            if self.cfg['basic']['pruning_method'] == 'info_bottle':
+                cr = self.get_CR(sess, self.cluster_res_list)
 
-            if (epoch + 1) % 10 == 0:
-                if self.prune_method == 'info_bottle':
-                    save_path = '/local/home/david/Remote/models/model_weights/vgg512_combine_ib_' + self.task_name + '_' + str(
-                        self.prune_threshold) + '_' + str(
-                        np.around(accu, decimals=4)) + '-' + str(np.around(accu_a, decimals=4)) + '-' + str(
-                        np.around(accu_b,
-                                  decimals=4)) + '_cr-' + str(
-                        np.around(cr, decimals=4))
+            if (epoch + 1) % self.cfg['train']['save_step'] == 0:
+                if self.cfg['basic']['pruning_method'] != 'info_bottle':
+                    name = '%s/tr%.2d-epo%.3d-acc%.4f-%.4f-%.4f' % (
+                        self.cfg['path']['path_save'], self.cnt_train, epoch + 1, acc, acc_a, acc_b)
                 else:
-                    save_path = '/local/home/david/Remote/models/model_weights/vgg512_combine_' + self.task_name + '_' + str(
-                        np.around(accu, decimals=4))
-                self.save_weight(sess, save_path)
+                    name = '%s/tr%.2d-epo%.3d-cr%.4f-acc%.4f-%.4f-%.4f' % (
+                        self.cfg['path']['path_save'], self.cnt_train, epoch + 1, cr, acc, acc_a, acc_b)
+                self.save_weight(sess, name)
 
-    def train(self, sess, n_epochs, task_name, lr, time_stamp):
-        if lr is not None:
-            self.config.learning_rate = lr
-            self.optimize()
+        # Count of training
+        self.cnt_train += 1
+        # Save into cfg
+        name_train = 'train%d' % self.cnt_train
+        self.cfg.add_section(name_train)
+        self.cfg.set(name_train, 'function', 'train_individual')
+        self.cfg.set(name_train, 'n_epochs', str(n_epochs))
+        self.cfg.set(name_train, 'lr', str(lr))
+        self.cfg.set(name_train, 'acc', str(acc))
+        self.cfg.set(name_train, 'acc_a', str(acc_a))
+        self.cfg.set(name_train, 'acc_b', str(acc_b))
+        if self.cfg['basic']['pruning_method'] == 'info_bottle':
+            self.cfg.set(name_train, 'cr', str(cr))
 
-        count_86 = 4
-
-        # 为了在没加vib的时候方便保存参数
-        cr = 1.
+    def train(self, sess, n_epochs, task_name, lr):
+        self.optimize(lr)
 
         sess.run(tf.variables_initializer(self.opt.variables()))
         step = self.global_step_tensor.eval(session=sess)
         for epoch in range(n_epochs):
-            step = self.train_one_epoch(sess, self.train_init, epoch, step, task_name, time_stamp)
-            accu, accu_a, accu_b = self.eval_once(sess, self.test_init, epoch, time_stamp)
+            step = self.train_one_epoch(sess, self.train_init, epoch, step, task_name)
+            acc, acc_a, acc_b = self.eval_once(sess, self.test_init, epoch)
 
-            if self.prune_method == 'info_bottle':
-                cr = self.get_CR(sess, self.cluster_res_list, time_stamp)
+            if self.cfg['basic']['pruning_method'] == 'info_bottle':
+                cr = self.get_CR(sess, self.cluster_res_list)
 
-            if (epoch + 1) % 10 == 0:
-                if self.prune_method == 'info_bottle':
-                    save_path = '/local/home/david/Remote/models/model_weights/vgg512_combine_ib_' + self.task_name + '_' + str(
-                        self.prune_threshold) + '_' + str(
-                        np.around(accu, decimals=4)) + '-' + str(np.around(accu_a, decimals=4)) + '-' + str(
-                        np.around(accu_b,
-                                  decimals=4)) + '_cr-' + str(
-                        np.around(cr, decimals=4))
+            if (epoch + 1) % self.cfg['train']['save_step'] == 0:
+                if self.cfg['basic']['pruning_method'] != 'info_bottle':
+                    name = '%s/tr%.2d-epo%.3d-acc%.4f-%.4f-%.4f' % (
+                        self.cfg['path']['path_save'], self.cnt_train, epoch + 1, acc, acc_a, acc_b)
                 else:
-                    save_path = '/local/home/david/Remote/models/model_weights/vgg512_combine_' + self.task_name + '_' + str(
-                        np.around(accu, decimals=4))
-                self.save_weight(sess, save_path)
+                    name = '%s/tr%.2d-epo%.3d-cr%.4f-acc%.4f-%.4f-%.4f' % (
+                        self.cfg['path']['path_save'], self.cnt_train, epoch + 1, cr, acc, acc_a, acc_b)
+                self.save_weight(sess, name)
+
+        # Count of training
+        self.cnt_train += 1
+        # Save into cfg
+        name_train = 'train%d' % self.cnt_train
+        self.cfg.add_section(name_train)
+        self.cfg.set(name_train, 'n_epochs', str(n_epochs))
+        self.cfg.set(name_train, 'lr', str(lr))
+        self.cfg.set(name_train, 'acc', str(acc))
+        self.cfg.set(name_train, 'acc_a', str(acc_a))
+        self.cfg.set(name_train, 'acc_b', str(acc_b))
+        if self.cfg['basic']['pruning_method'] == 'info_bottle':
+            self.cfg.set(name_train, 'cr', str(cr))
 
     def test(self, sess):
         sess.run(self.test_init)
@@ -836,7 +803,7 @@ class VGG_Combined(BaseModel):
             '\nTesting {}, val_acc={:%}, val_loss={:f}'.format(self.task_name, total_correct_preds / self.n_samples_val,
                                                                total_loss / n_batches))
 
-    def get_CR(self, sess, cluster_res_list, time_stamp):
+    def get_CR(self, sess, cluster_res_list):
         layers_name = ['conv1_1', 'conv1_2',
                        'conv2_1', 'conv2_2',
                        'conv3_1', 'conv3_2', 'conv3_3',
@@ -887,11 +854,12 @@ class VGG_Combined(BaseModel):
                 # 和musks是一一对应的关系
                 layers_name_list += [layer.layer_name]
                 layers_type += [layer.layer_type]
-                # # TODO: 为了调整实验结果
+
+                threshold_dict = json.loads(self.cfg['pruning']['cluster_threshold_dict'])
                 if layer.layer_type == 'C_ib':
-                    masks += [layer.get_mask(threshold=-1)]
+                    masks += [layer.get_mask(threshold=threshold_dict['conv'])]
                 elif layer.layer_type == 'F_ib':
-                    masks += [layer.get_mask(threshold=7)]
+                    masks += [layer.get_mask(threshold=threshold_dict['fc'])]
 
         # 获得具体的mask
         masks = sess.run(masks)
@@ -978,9 +946,10 @@ class VGG_Combined(BaseModel):
         pruned_params = total_params - remain_params
         pruned_flops = total_flops - remain_flops
 
+        cr = np.around(float(total_params - pruned_params) / total_params, decimals=5)
+
         str_1 = 'Total parameters: {}, Pruned parameters: {}, Remaining params:{}, Remain/Total params:{}'.format(
-            total_params, pruned_params, remain_params,
-            np.around(float(total_params - pruned_params) / total_params, decimals=5))
+            total_params, pruned_params, remain_params, cr)
 
         res_each_layer = list()
         for i in range(len(prune_state)):
@@ -995,14 +964,6 @@ class VGG_Combined(BaseModel):
                                                                                                            float(
                                                                                                                total_flops - pruned_flops) / total_flops,
                                                                                                            decimals=5))
-        print(str_1)
-        print(str_2)
-        print(str_3)
 
-        if time_stamp is not None:
-            with open('/local/home/david/Remote/models/model_weights/log_vgg_combine_' + time_stamp, 'a+') as f:
-                f.write(str_1 + '\n')
-                f.write(str_2 + '\n')
-                f.write(str_3 + '\n')
-
-        return np.around(float(total_params - pruned_params) / total_params, decimals=5)
+        log(str_1 + '\n' + str_2 + '\n' + str_3)
+        return cr

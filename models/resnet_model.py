@@ -13,7 +13,7 @@ import sys
 sys.path.append(r"/local/home/david/Remote/")
 
 from models.base_model import BaseModel
-from utils.config import process_config
+from utils.configer import process_config
 from layers.conv_layer import ConvLayer
 from layers.bn_layer import BatchNormalizeLayer
 from layers.fc_layer import FullConnectedLayer
@@ -343,7 +343,7 @@ class ResNet(BaseModel):
 
 if __name__ == '__main__':
 
-    config = process_config("../configs/res_net.json")
+    config = process_config("../config/res_net.json")
     gpu_config = tf.ConfigProto(allow_soft_placement=True)
     gpu_config.gpu_options.allow_growth = True
 

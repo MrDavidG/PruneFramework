@@ -15,7 +15,7 @@ import sys
 sys.path.append(r"/local/home/david/Remote/")
 
 from models.vgg_combine import VGG_Combined
-from utils.config import process_config
+from utils.configer import process_config
 from datetime import datetime
 
 import tensorflow as tf
@@ -38,7 +38,7 @@ def rebuild_model(weight_a, weight_b, cluster_res_list, signal_list, gamma, regu
     :param regu_decay: regularizer for A->AB and B->AB
     :return:
     """
-    config = process_config("../configs/ib_vgg.json")
+    config = process_config("../config/config.json")
     gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True
 

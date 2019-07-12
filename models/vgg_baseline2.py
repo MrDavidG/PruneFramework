@@ -18,7 +18,7 @@ from models.base_model import BaseModel
 from layers.conv_layer import ConvLayer
 from layers.fc_layer import FullConnectedLayer
 from layers.ib_layer import InformationBottleneckLayer
-from utils.config import process_config
+from utils.configer import process_config
 from datetime import datetime
 
 import numpy as np
@@ -62,7 +62,7 @@ class VGGNet(BaseModel):
         if self.prune_method == 'info_bottle' and 'conv1_1/info_bottle/mu' not in self.weight_dict.keys():
             self.weight_dict = dict(self.weight_dict, **self.construct_initial_weights_ib())
 
-    def construct_initial_weights(self, model_path='/local/home/david/Remote/datasets/vgg_imdb_pretrain_2'):
+    def construct_initial_weights(self, model_path='/local/home/david/Remote/dataset/vgg_imdb_pretrain_2'):
         def bias_variable(shape):
             return (np.zeros(shape=shape, dtype=np.float32)).astype(dtype=np.float32)
 
@@ -401,8 +401,8 @@ class VGGNet(BaseModel):
 
 
 if __name__ == '__main__':
-    config = process_config("../configs/ib_vgg.json")
-    # config = process_config("../configs/vgg_net.json")
+    config = process_config("../config/config.json")
+    # config = process_config("../config/vgg_net.json")
 
     # apply video memory dynamically
     gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
@@ -438,9 +438,9 @@ if __name__ == '__main__':
 def exp_celeba(task_name_list, model_path=0, regularizer=0, is_vib=False, gamma=None, ib_threshold=None,
                kl_factor=None):
     if is_vib:
-        config = process_config("../configs/ib_vgg.json")
+        config = process_config("../config/config.json")
     else:
-        config = process_config("../configs/vgg_net.json")
+        config = process_config("../config/vgg_net.json")
 
     # apply video memory dynamically
     gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)

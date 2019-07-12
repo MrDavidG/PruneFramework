@@ -12,75 +12,66 @@ Description.
 """
 import sys
 
-sys.path.append(r"/local/home/david/Remote/")
+sys.path.append(r"/local/home/david/Remote/PruneFramework")
 
 from models.base_model import BaseModel
 from layers.conv_layer import ConvLayer
 from layers.fc_layer import FullConnectedLayer
 from layers.ib_layer import InformationBottleneckLayer
-from utils.config import process_config
+from utils.configer import get_cfg
 from datetime import datetime
+from utils.logger import *
 
+import tensorflow as tf
 import numpy as np
+
 import pickle
 import time
-
 import os
-import tensorflow as tf
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
+# gpu 0
+# os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4eec6600-f5e3-f385-9b14-850ae9a2b236'
+
+
+# gpu 1
+# os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4b0856cd-c698-63a2-0b6e-9a33d380f9c4'
 
 class VGGNet(BaseModel):
-    def __init__(self, config, task_name, musk=False, gamma=1., model_path=None):
+    def __init__(self, config, musk=False):
         super(VGGNet, self).__init__(config)
 
-        if task_name in ['celeba', 'celeba1', 'celeba2']:
-            self.imgs_path = self.config.dataset_path + 'celeba/'
-        elif task_name in ['lfw1', 'lfw2', 'lfw']:
-            self.imgs_path = self.config.dataset_path + 'lfw/'
-        else:
-            self.imgs_path = self.config.dataset_path + task_name + '/'
-
-        # conv with biases and without bn
-        self.meta_keys_with_default_val = {"is_merge_bn": True}
-
-        self.task_name = task_name
-
+        # Used for lobs
         self.is_musked = musk
-
-        self.gamma = gamma
 
         self.load_dataset()
         self.n_classes = self.Y.shape[1]
 
-        if model_path and os.path.exists(model_path):
-            # Directly load all weights
-            self.weight_dict = pickle.load(open(model_path, 'rb'))
-            print('[%s] Loading weight matrix in %s' % (datetime.now(), model_path))
+        if self.cfg['path']['path_load'] and os.path.exists(self.cfg['path']['path_load']):
+            log_l('Loading weights in %s' % self.cfg['path']['path_load'])
+            self.weight_dict = pickle.load(open(self.cfg['path']['path_load'], 'rb'))
             self.initial_weight = False
         else:
-            # Use pre-train weights in conv, but init weights in fc
-            if self.task_name.startswith('deepfashion'):
-                self.weight_dict = self.construct_initial_weights(
-                    model_path='/local/home/david/Remote/datasets/vgg_deepfashion_pretrain')
-            else:
-                self.weight_dict = self.construct_initial_weights()
-            print('[%s] Initialize weight matrix' % (datetime.now()))
+            log_l('Initialize weight matrix')
+            self.weight_dict = self.construct_initial_weights(
+                path_weights_pretrain=config['data']['path_weights_pretrain'])
             self.initial_weight = True
 
-        if self.prune_method == 'info_bottle' and 'conv1_1/info_bottle/mu' not in self.weight_dict.keys():
-            print('初始ib层权重')
+        if self.cfg['basic'][
+            'pruning_method'] == 'info_bottle' and 'conv1_1/info_bottle/mu' not in self.weight_dict.keys():
+            log_l('Initialize vib params')
             self.weight_dict = dict(self.weight_dict, **self.construct_initial_weights_ib())
         else:
-            print('!!!!!!!!未初始化ib权重，model_path中自带或未启动ib pruning!!!!!!!!')
+            log_l('Does not initialize vib params, already having or prune_method is None')
 
-    def construct_initial_weights(self, model_path='/local/home/david/Remote/datasets/vgg_imdb_pretrain_2'):
+    def construct_initial_weights(self, path_weights_pretrain):
+        # '/local/home/david/Remote/dataset/vgg_imdb_pretrain_2'
         def bias_variable(shape):
             return (np.zeros(shape=shape, dtype=np.float32)).astype(dtype=np.float32)
 
         # Weights of conv
-        weight_dict = pickle.load(open(model_path, 'rb'))
+        weight_dict = pickle.load(open(path_weights_pretrain, 'rb'))
 
         # fc layers
         dim_fc = np.int(self.X.shape[2] // 32) ** 2 * 512
@@ -99,30 +90,34 @@ class VGGNet(BaseModel):
     def construct_initial_weights_ib(self):
         weight_dict = dict()
         # parameters of the information bottleneck
-        if self.prune_method == 'info_bottle':
-            dim_list = np.array([64, 64,
-                                 128, 128,
-                                 256, 256, 256,
-                                 512, 512, 512,
-                                 512, 512, 512,
-                                 512, 512])
-            for i, name_layer in enumerate(['conv1_1', 'conv1_2',
-                                            'conv2_1', 'conv2_2',
-                                            'conv3_1', 'conv3_2', 'conv3_3',
-                                            'conv4_1', 'conv4_2', 'conv4_3',
-                                            'conv5_1', 'conv5_2', 'conv5_3',
-                                            'fc6', 'fc7']):
-                dim = dim_list[i]
-                weight_dict[name_layer + '/info_bottle/mu'] = np.random.normal(loc=1, scale=0.01,
-                                                                               size=[dim]).astype(
-                    np.float32)
 
-                weight_dict[name_layer + '/info_bottle/logD'] = np.random.normal(loc=-9,
-                                                                                 scale=0.01,
-                                                                                 size=[dim]).astype(
-                    np.float32)
+        dim_list = np.array([64, 64,
+                             128, 128,
+                             256, 256, 256,
+                             512, 512, 512,
+                             512, 512, 512,
+                             512, 512])
+        for i, name_layer in enumerate(['conv1_1', 'conv1_2',
+                                        'conv2_1', 'conv2_2',
+                                        'conv3_1', 'conv3_2', 'conv3_3',
+                                        'conv4_1', 'conv4_2', 'conv4_3',
+                                        'conv5_1', 'conv5_2', 'conv5_3',
+                                        'fc6', 'fc7']):
+            dim = dim_list[i]
+            weight_dict[name_layer + '/info_bottle/mu'] = np.random.normal(loc=1, scale=0.01,
+                                                                           size=[dim]).astype(
+                np.float32)
+
+            weight_dict[name_layer + '/info_bottle/logD'] = np.random.normal(loc=-9,
+                                                                             scale=0.01,
+                                                                             size=[dim]).astype(
+                np.float32)
 
         return weight_dict
+
+    def set_kl_factor(self, kl_factor):
+        self.kl_factor = kl_factor
+        self.loss()
 
     def inference(self):
         """
@@ -142,19 +137,23 @@ class VGGNet(BaseModel):
                               ('conv5_1', 2.0 / 1), ('conv5_2', 2.0 / 1), ('conv5_3', 2.0 / 1), 'pooling']:
                 if set_layer != 'pooling':
                     conv_name, kl_mult = set_layer
+                    if self.cfg['basic']['pruning_method'] == 'info_bottle':
+                        kl_mult *= self.cfg['pruning'].getfloat('gamma_conv')
+
                     with tf.variable_scope(conv_name):
-                        conv = ConvLayer(y, self.weight_dict, self.config.dropout, self.is_training, self.is_musked,
-                                         self.regularizer_conv, is_shared=self.is_layer_shared(conv_name),
-                                         share_scope=self.share_scope, is_merge_bn=self.meta_val(
-                                'is_merge_bn'))
+                        conv = ConvLayer(y, weight_dict=self.weight_dict, is_training=self.is_training,
+                                         is_musked=self.is_musked,
+                                         regularizer_conv=self.regularizer_conv)
                         self.layers.append(conv)
                         y = tf.nn.relu(conv.layer_output)
 
                         # Pruning of the method 'Information Bottleneck'
-                        if self.prune_method == 'info_bottle':
+                        if self.cfg['basic']['pruning_method'] == 'info_bottle':
                             ib_layer = InformationBottleneckLayer(y, layer_type='C_ib', weight_dict=self.weight_dict,
                                                                   is_training=self.is_training,
-                                                                  kl_mult=kl_mult, mask_threshold=self.prune_threshold)
+                                                                  kl_mult=kl_mult,
+                                                                  mask_threshold=self.cfg['pruning'].getfloat(
+                                                                      'prune_threshold'))
 
                             self.layers.append(ib_layer)
                             y, ib_kld = ib_layer.layer_output
@@ -175,11 +174,12 @@ class VGGNet(BaseModel):
 
                     y = tf.layers.dropout(y, training=self.is_training)
 
-                    if self.prune_method == 'info_bottle':
+                    if self.cfg['basic']['pruning_method'] == 'info_bottle':
                         ib_layer = InformationBottleneckLayer(y, layer_type='F_ib', weight_dict=self.weight_dict,
                                                               is_training=self.is_training,
-                                                              kl_mult=self.gamma,
-                                                              mask_threshold=self.prune_threshold)
+                                                              kl_mult=self.cfg['pruning'].getfloat('gamma_fc'),
+                                                              mask_threshold=self.cfg['basic'].getfloat(
+                                                                  'prune_threshold'))
 
                         self.layers.append(ib_layer)
                         y, ib_kld = ib_layer.layer_output
@@ -197,42 +197,36 @@ class VGGNet(BaseModel):
         l2_loss = tf.losses.get_regularization_loss()
 
         # for the pruning method
-        if self.prune_method == 'info_bottle':
+        if self.cfg['basic']['pruning_method'] == 'info_bottle':
             self.op_loss = mae_loss + l2_loss + self.kl_factor * self.kl_total
         else:
             self.op_loss = mae_loss + l2_loss
 
-    def optimize(self):
+    def optimize(self, lr):
         # 为了让bn中的\miu, \delta滑动平均
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
         with tf.control_dependencies(update_ops):
             with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
-                self.opt = tf.train.MomentumOptimizer(learning_rate=self.config.learning_rate, momentum=0.9,
+                self.opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=0.9,
                                                       use_nesterov=True)
-                # self.opt = tf.train.GradientDescentOptimizer(learning_rate=self.config.learning_rate)
 
                 self.op_opt = self.opt.minimize(self.op_loss)
 
     def evaluate(self):
         with tf.name_scope('predict'):
             correct_preds = tf.equal(self.Y, tf.sign(self.op_logits))
-            self.op_accuracy = tf.reduce_sum(tf.cast(correct_preds, tf.float32)) / tf.cast(tf.shape(self.Y)[1], tf.float32)
+            self.op_accuracy = tf.reduce_sum(tf.cast(correct_preds, tf.float32)) / tf.cast(tf.shape(self.Y)[1],
+                                                                                           tf.float32)
 
-    def build(self, weight_dict=None, share_scope=None, is_merge_bn=False):
-        # dont need to merge bn
-        if is_merge_bn and not self.meta_val('is_merge_bn'):
-            self.merge_batch_norm_to_conv()
-            self.set_meta_val('is_merge_bn', is_merge_bn)
-
+    def build(self, weight_dict=None, share_scope=None):
         if weight_dict:
             self.weight_dict = weight_dict
             self.share_scope = share_scope
         self.inference()
         self.loss()
-        self.optimize()
         self.evaluate()
 
-    def train_one_epoch(self, sess, init, epoch, step, time_stamp):
+    def train_one_epoch(self, sess, init, epoch):
         sess.run(init)
         total_loss = 0
         total_kl = 0
@@ -241,14 +235,14 @@ class VGGNet(BaseModel):
         time_last = time.time()
         try:
             while True:
-                if self.prune_method == 'info_bottle':
+                if self.cfg['basic']['pruning_method'] == 'info_bottle':
                     _, loss, accuracy_batch, kl = sess.run([self.op_opt, self.op_loss, self.op_accuracy, self.kl_total],
                                                            feed_dict={self.is_training: True})
                     total_kl += kl
                 else:
                     _, loss, accuracy_batch = sess.run([self.op_opt, self.op_loss, self.op_accuracy],
                                                        feed_dict={self.is_training: True})
-                step += 1
+
                 total_loss += loss
                 total_correct_preds += accuracy_batch
                 n_batches += 1
@@ -259,33 +253,17 @@ class VGGNet(BaseModel):
                         n_batches,
                         self.total_batches_train,
                         total_loss / n_batches,
-                        total_correct_preds / (n_batches * self.config.batch_size),
+                        total_correct_preds / (n_batches * self.cfg['basic'].getint('batch_size')),
                         total_kl / n_batches,
                         time.time() - time_last)
 
                     print('\r' + str_, end=' ')
-
                     time_last = time.time()
-
         except tf.errors.OutOfRangeError:
             pass
-
-        # 写文件
-        if time_stamp is not None:
-            if self.prune_method == 'info_bottle':
-                path = '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_ib_' + time_stamp
-            else:
-                path = '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_' + time_stamp
-
-            with open(path, 'a+') as f:
-                f.write(str_ + '\n')
-
-        return step
-
-    def set_global_tensor(self, training_tensor, regu_conv, regu_fc):
-        self.is_training = training_tensor
-        self.regularizer_conv = regu_conv
-        self.regularizer_fc = regu_fc
+        print('')
+        # 写入log文件
+        log(str_, need_print=False)
 
     def fetch_weight(self, sess):
         """
@@ -300,12 +278,9 @@ class VGGNet(BaseModel):
         for params_dict in weight_list:
             for k, v in params_dict.items():
                 weight_dict[k.split(':')[0]] = v
-        for meta_key in self.meta_keys_with_default_val.keys():
-            meta_key_in_weight = meta_key
-            weight_dict[meta_key_in_weight] = self.meta_val(meta_key)
         return weight_dict
 
-    def eval_once(self, sess, init, epoch, time_stamp):
+    def eval_once(self, sess, init, epoch):
         sess.run(init)
         total_loss = 0
         total_correct_preds = 0
@@ -323,48 +298,46 @@ class VGGNet(BaseModel):
         except tf.errors.OutOfRangeError:
             pass
         time_end = time.time()
-        accu = total_correct_preds / self.n_samples_val
+        acc = total_correct_preds / self.n_samples_val
         str_ = 'Epoch:{:d}, val_acc={:%}, val_loss={:f}, used_time:{:.2f}s'.format(epoch + 1,
-                                                                                   accu,
+                                                                                   acc,
                                                                                    total_loss / n_batches,
                                                                                    time_end - time_start)
-        print('\n' + str_)
 
-        if time_stamp is not None:
-            # 写文件
-            if self.prune_method == 'info_bottle':
-                path = '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_ib_' + time_stamp
-            else:
-                path = '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_' + time_stamp
+        log(str_)
+        return acc
 
-            with open(path, 'a+') as f:
-                f.write(str_ + '\n')
-
-        return accu
-
-    def train(self, sess, n_epochs, lr, time_stamp):
-        if lr is not None:
-            self.config.learning_rate = lr
-            self.optimize()
+    def train(self, sess, n_epochs, lr):
+        # Build optimize graph
+        self.optimize(lr)
 
         sess.run(tf.variables_initializer(self.opt.variables()))
-        step = self.global_step_tensor.eval(session=sess)
-        for epoch in range(n_epochs):
-            step = self.train_one_epoch(sess, self.train_init, epoch, step, time_stamp)
-            accu = self.eval_once(sess, self.test_init, epoch, time_stamp)
 
-            if self.prune_method == 'info_bottle':
-                cr = self.get_CR(sess, time_stamp)
+        for epoch in range(n_epochs):
+            self.train_one_epoch(sess, self.train_init, epoch)
+            acc = self.eval_once(sess, self.test_init, epoch)
+
+            if self.cfg['basic']['pruning_method'] == 'info_bottle':
+                cr = self.get_CR(sess)
 
             if (epoch + 1) % 10 == 0:
-                if self.prune_method == 'info_bottle':
-                    save_path = '/local/home/david/Remote/models/model_weights/vgg512_ib_' + self.task_name + '_' + str(
-                        self.prune_threshold) + '_' + str(
-                        np.around(accu, decimals=6)) + '_cr-' + str(np.around(cr, decimals=5))
+                if self.cfg['basic']['pruning_method'] != 'info_bottle':
+                    name = '%s/tr%.2d-epo%.3d-acc%.4f' % (self.cfg['path']['path_save'], self.cnt_train, epoch + 1, acc)
                 else:
-                    save_path = '/local/home/david/Remote/models/model_weights/vgg512_' + self.task_name + '_' + str(
-                        np.around(accu, decimals=6))
-                self.save_weight(sess, save_path)
+                    name = '%s/tr%.2d-epo%.3d-cr%.4f-acc%.4f' % (
+                        self.cfg['path']['path_save'], self.cnt_train, epoch + 1, cr, acc)
+                self.save_weight(sess, name)
+
+        # Count of training
+        self.cnt_train += 1
+        # Save into cfg
+        name_train = 'train%d' % self.cnt_train
+        self.cfg.add_section(name_train)
+        self.cfg.set(name_train, 'n_epochs', str(n_epochs))
+        self.cfg.set(name_train, 'lr', str(lr))
+        self.cfg.set(name_train, 'acc', str(acc))
+        if self.cfg['basic']['pruning_method'] == 'info_bottle':
+            self.cfg.set(name_train, 'cr', str(cr))
 
     def test(self, sess):
         sess.run(self.test_init)
@@ -386,7 +359,7 @@ class VGGNet(BaseModel):
             '\nTesting {}, val_acc={:%}, val_loss={:f}'.format(self.task_name, total_correct_preds / self.n_samples_val,
                                                                total_loss / n_batches))
 
-    def get_CR(self, sess, time_stamp=None):
+    def get_CR(self, sess):
         name_len_dict = [72, 72,
                          36, 36,
                          18, 18, 18,
@@ -455,98 +428,108 @@ class VGGNet(BaseModel):
         remain_flops += (2 * (in_channels - in_pruned) - 1) * n_classes
         pruned_flops = total_flops - remain_flops
 
+        cr = np.around(float(total_params - pruned_params) / total_params, decimals=5)
+        flops = np.around(float(remain_flops) / total_flops, decimals=5)
+
         str_1 = 'Total parameters: {}, Pruned parameters: {}, Remaining params:{}, Remain/Total params:{}, Each layer pruned: {}'.format(
-            total_params, pruned_params, remain_params, float(total_params - pruned_params) / total_params, prune_state)
+            total_params, pruned_params, remain_params, cr, prune_state)
 
         str_2 = 'Total FLOPs: {}, Pruned FLOPs: {}, Remaining FLOPs: {}, Remain/Total FLOPs:{}'.format(total_flops,
                                                                                                        pruned_flops,
                                                                                                        remain_flops,
-                                                                                                       np.around(float(
-                                                                                                           remain_flops) / total_flops,
-                                                                                                                 decimals=5))
+                                                                                                       flops)
 
-        print(str_1)
-        print(str_2)
+        log(str_1 + '\n' + str_2)
 
-        if time_stamp is not None:
-            if self.prune_method == 'info_bottle':
-                path = '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_ib_' + time_stamp
-            else:
-                path = '/local/home/david/Remote/models/model_weights/log_vgg512_' + self.task_name + '_' + time_stamp
+        return cr
 
-            with open(path, 'a+') as f:
-                f.write(str_1 + '\n')
-                f.write(str_2 + '\n')
 
-        return float(total_params - pruned_params) / total_params
+def exp(task_names, path_models, pruning, pruning_set, plan_train_normal, plan_train_vib):
+    for task_index, task_name in enumerate(task_names):
+        # Obtain time stamp
+        time_stamp = str(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+
+        cfg = get_cfg(task_name, time_stamp, 'net_vgg16.cfg')
+        if path_models is not None:
+            cfg['path']['path_load'] = str(path_models[task_index])
+        else:
+            cfg['path']['path_load'] = str(None)
+
+        # Create exp dir
+        if not os.path.exists(cfg['path']['path_save']):
+            os.mkdir(cfg['path']['path_save'])
+            log_t('Create directory %s' % cfg['path']['path_save'])
+
+        # Add pruning cfg into files
+        if pruning:
+            cfg['basic']['pruning_method'] = 'info_bottle'
+            cfg.add_section('pruning')
+            for key in pruning_set.keys():
+                cfg.set('pruning', key, str(pruning_set[key]))
+
+        log_l('Training on task %s' % task_name)
+
+        # Create model
+        gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
+        gpu_config.gpu_options.allow_growth = True
+
+        tf.reset_default_graph()
+        sess = tf.Session(config=gpu_config)
+
+        model = VGGNet(cfg)
+        model.build()
+
+        sess.run(tf.global_variables_initializer())
+
+        # Pre test
+        log_l('Pre test')
+        model.eval_once(sess, model.test_init, -1)
+        # model.get_CR(sess)
+        log_l('')
+
+        # Train
+        if pruning:
+            for plan in plan_train_vib:
+                model.set_kl_factor(plan['kl_factor'])
+
+                for set_ in plan['train']:
+                    model.train(sess=sess, n_epochs=set_['n_epochs'], lr=set_['lr'])
+                model.save_cfg()
+        else:
+            for plan in plan_train_normal:
+                model.train(sess=sess, n_epochs=plan['n_epochs'], lr=plan['lr'])
+                model.save_cfg()
 
 
 if __name__ == '__main__':
-    # for task_name in ['celeba']:
-    for task_name in ['lfw']:
-        config = process_config("../configs/ib_vgg.json")
-        # config = process_config("../configs/vgg_net.json")
+    # 备选参数设置
+    tasks_lfw = ['lfw1', 'lfw2', 'lfw']
+    tasks_celeba = ['celeba1', 'celeba2', 'celeba']
+    tasks_deepfashion = ['deepfashion1', 'deepfashion2', 'deepfashion']
 
-        # apply video memory dynamically
-        gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
-        gpu_config.gpu_options.allow_growth = True
-        print('Training on task {:s}'.format(task_name))
-        tf.reset_default_graph()
-        # session for training
-        session = tf.Session(config=gpu_config)
+    plan_train_vib = [
+        {'kl_factor': 4e-5,
+         'train': [{'n_epochs': 30, 'lr': 0.1},
+                   {'n_epochs': 30, 'lr': 0.01},
+                   {'n_epochs': 30, 'lr': 0.001}]},
+        {'kl_factor': 2e-7,
+         'train': {'n_epochs': 10, 'lr': 0.1}}
+    ]
 
-        training = tf.placeholder(dtype=tf.bool, name='training')
+    plan_train_normal = [{'n_epochs': 20, 'lr': 0.01},
+                         {'n_epochs': 20, 'lr': 0.001},
+                         {'n_epochs': 0, 'lr': 0.001}]
 
-        regularizer_conv = tf.contrib.layers.l2_regularizer(scale=0.00)
-        regularizer_fc = tf.contrib.layers.l2_regularizer(scale=0.00)
-
-        # 为了测试vib效果
-        # if task_name == 'celeba1':
-        #     model_path = '/local/home/david/Remote/models/model_weights/best_vgg512_celeba1_0.907119'
-        # elif task_name == 'celeba2':
-        #     model_path = '/local/home/david/Remote/models/model_weights/best_vgg512_celeba2_0.892631'
-        # elif task_name == 'celeba':
-        #     model_path = '/local/home/david/Remote/models/model_weights/best_vgg512_ib_celeba_0.01_0.885675_cr-0.02222'
-        # else:
-        #     model_path = None
-        model_path = None
-        if task_name == 'lfw1':
-            model_path = '/local/home/david/Remote/models/model_weights/vgg512_ib_lfw1_0.01_0.883428_cr-0.00812'
-                         # 'vgg512_ib_lfw1_0.01_0.878634_cr-0.03259' 这个是120+20的结果
-                         # 'vgg512_lfw1_0.9039'
-        elif task_name == 'lfw2':
-            model_path = '/local/home/david/Remote/models/model_weights/vgg512_ib_lfw2_0.01_0.801503_cr-0.1332_4e-5_80epoch'
-                         # 'vgg512_lfw2_0.833219'
-        elif task_name == 'lfw':
-            model_path = '/local/home/david/Remote/models/model_weights/best_vgg512_ib_lfw_0.01_0.848858_cr-0.01683'
-        else:
-            model_path = None
-
-        model = VGGNet(config, task_name, musk=False, gamma=15,
-                       model_path=model_path)
-        # model_path='/local/home/david/Remote/models/model_weights/vgg512_celeba2_0.892631_best')
-        model.set_global_tensor(training, regularizer_conv, regularizer_fc)
-        model.build()
-
-        session.run(tf.global_variables_initializer())
-
-        model.eval_once(session, model.test_init, -1, None)
-        time_stamp = str(datetime.now())
-        # model.eval_once(session, model.test_init, -1, time_stamp)
-        # model.get_CR(session, time_stamp)
-
-        # 正常训练模型
-        # model.train(sess=session, n_epochs=20, lr=0.1, time_stamp=time_stamp)
-        # model.train(sess=session, n_epochs=30, lr=0.01, time_stamp=time_stamp)
-        # model.train(sess=session, n_epochs=20, lr=0.001, time_stamp=time_stamp)
-        # model.train(sess=session, n_epochs=10, lr=0.0001, time_stamp=time_stamp)
-
-        # 先是1e-5进行30个epoch，然后变成1e-6来进行20个epoch
-        # model.train(sess=session, n_epochs=120, lr=0.01, time_stamp=time_stamp)
-        # print('————————————————————改变为1e-6之后, 重新训练10个epoch————————————————————')
-        # model.kl_factor = 2e-7
-        # model.loss()
-        # model.optimize()
-        # model.evaluate()
-        # model.eval_once(session, model.test_init, -1, None)
-        # model.train(sess=session, n_epochs=40, lr=0.01, time_stamp=time_stamp)
+    # 执行实验代码
+    exp(task_names=['deepfashion1'],
+        path_models=None,
+        pruning=False,
+        pruning_set={
+            'name': 'info_bottle',
+            'gamma_conv': 1.,
+            'gamma_fc': 15,
+            'pruning_threshold': 0.01
+        },
+        plan_train_normal=plan_train_normal,
+        plan_train_vib=plan_train_vib
+        )

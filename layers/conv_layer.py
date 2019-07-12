@@ -16,7 +16,7 @@ import tensorflow as tf
 
 class ConvLayer(BaseLayer):
     def __init__(self, x, weight_dict=None, is_dropout=False, is_training=False, is_musked=False, regularizer_conv=None,
-                 stride=1, is_shared=False, share_scope=None, is_merge_bn=False):
+                 stride=1, is_merge_bn=True):
         super(ConvLayer, self).__init__()
 
         # With biases

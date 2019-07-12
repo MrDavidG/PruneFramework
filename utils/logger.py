@@ -1,56 +1,56 @@
 # encoding: utf-8
 """
+@author:    dawei gao
+@contact:   david_gao@buaa.edu.cn
 
 @version: 1.0
 @license: Apache Licence
-@file: logger
-@time: 2019-03-27 16:21
+@file: logger.py
+@time: 2019-03-27 10:59
 
-Description. 
+Description here.
 """
 
-import tensorflow as tf
-import os
+from datetime import datetime
 
 
-class Logger:
-    def __init__(self, sess, config):
-        self.sess = sess
-        self.config = config
-        self.summary_placeholders = {}
-        self.summary_ops = {}
-        self.train_summary_writer = tf.summary.FileWriter(os.path.join(self.config.summary_dir, "train"),
-                                                          self.sess.graph)
-        self.test_summary_writer = tf.summary.FileWriter(os.path.join(self.config.summary_dir, "test"))
+class logger:
+    path_log = None
+    record_log = True
 
-    # it can summarize scalars and images.
-    def summarize(self, step, summarizer='train', scope='', summaries_dict=None):
-        """
-        :param step: the step of the summary
-        :param summarizer: use the train summary writer or the test one
-        :param scope: variable scope
-        :param summaries_dict: the dict of the summaries values (tag,value)
-        :return:
-        """
-        summary_writer = self.train_summary_writer if summarizer == "train" else self.test_summary_writer
-        with tf.variable_scope(scope):
+    def __init__(self, path_log):
+        logger.path_log = path_log
 
-            if summaries_dict is not None:
-                summary_list = []
-                for tag, value in summaries_dict.items():
-                    if tag not in self.summary_ops:
-                        if len(value.shape) <= 1:
-                            self.summary_placeholders[tag] = tf.placeholder('float32', value.shape, name=tag)
-                        else:
-                            self.summary_placeholders[tag] = tf.placeholder('float32', [None] + list(value.shape[1:]),
-                                                                            name=tag)
-                        if len(value.shape) <= 1:
-                            self.summary_ops[tag] = tf.summary.scalar(tag, self.summary_placeholders[tag])
-                        else:
-                            self.summary_ops[tag] = tf.summary.image(tag, self.summary_placeholders[tag])
+    @staticmethod
+    def get_path_log():
+        return logger.path_log
 
-                    summary_list.append(self.sess.run(self.summary_ops[tag], {self.summary_placeholders[tag]: value}))
 
-                for summary in summary_list:
-                    summary_writer.add_summary(summary, step)
-                summary_writer.flush()
+def print_t(str):
+    print('[%s] %s' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), str))
+
+
+def print_l(str):
+    print('{:-^60}'.format(str))
+
+
+def log(str, need_print=True, end='\n'):
+    if logger.record_log:
+        with open(logger.path_log, 'a') as f:
+            f.write(str + end)
+    if need_print:
+        print(str, end=end)
+
+
+def log_t(str):
+    if logger.record_log:
+        with open(logger.path_log, 'a') as f:
+            f.write('[%s] %s\n' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), str))
+    print_t(str)
+
+
+def log_l(str):
+    if logger.record_log:
+        with open(logger.path_log, 'a') as f:
+            f.write('{:-^60}\n'.format(str))
+    print_l(str)

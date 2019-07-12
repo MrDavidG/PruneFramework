@@ -13,7 +13,7 @@ Description.
 
 from models.vgg_model import VGGNet
 from models.resnet_model import ResNet
-from utils.config import process_config
+from utils.configer import process_config
 
 from numpy.linalg import inv, pinv, LinAlgError
 import tensorflow as tf
@@ -421,10 +421,10 @@ def retrain(model_type, task_name, save_root='./pruning_weights/'):
         session = tf.Session(config=gpu_config)
 
         if model_type == 'VGG':
-            config = process_config("../configs/vgg_net.json")
+            config = process_config("../config/vgg_net.json")
             model = VGGNet(config, task_name, model_path)
         elif model_type == 'RES':
-            config = process_config("../configs/res_net.json")
+            config = process_config("../config/res_net.json")
             model = ResNet(config, task_name, model_path)
 
         model.set_global_tensor(training, regularizer_conv, regularizer_fc)
@@ -450,7 +450,7 @@ def Lobs():
     session = tf.Session(config=gpu_config)
 
     # Step 1: get a well-trained deep network
-    config_pruning = process_config("../configs/lobs_res.json")
+    config_pruning = process_config("../config/lobs_res.json")
     task_name = 'mnist'
     if config_pruning.model_type == 'VGG':
         model = VGGNet(config_pruning, task_name, config_pruning.model_path)

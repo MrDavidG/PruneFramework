@@ -30,8 +30,7 @@ from models.base_model import BaseModel
 from layers.conv_layer import ConvLayer
 from layers.fc_layer import FullConnectedLayer
 from layers.ib_layer import InformationBottleneckLayer
-from utils.config import process_config
-from utils.time_stamp import print_with_time_stamp as print_
+from utils.configer import process_config
 
 import numpy as np
 import pickle
@@ -61,11 +60,11 @@ class DenseNet(BaseModel):
 
         if model_path and os.path.exists(model_path):
             self.weight_dict = pickle.load(open(model_path, 'rb'), encoding='bytes')
-            print_('Loading weight matrix')
+            print('Loading weight matrix')
             self.initial_weight = False
         else:
             self.weight_dict = self.construct_initial_weights()
-            print_('Initialize weight matrix')
+            print('Initialize weight matrix')
             self.initial_weight = True
 
     def construct_initial_weights(self):
@@ -291,7 +290,7 @@ class DenseNet(BaseModel):
 
 if __name__ == '__main__':
 
-    config = process_config("../configs/dense_net.json")
+    config = process_config("../config/dense_net.json")
     # apply video memory dynamically
     gpu_config = tf.ConfigProto(intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True

@@ -13,7 +13,6 @@ The base dnn model template.
 
 import tensorflow as tf
 from abc import abstractmethod
-from utils.time_stamp import print_with_time_stamp as print
 from data_loader.image_data_generator import ImageDataGenerator
 
 import pickle
@@ -21,10 +20,6 @@ import pickle
 
 class BaseModel:
     def __init__(self, config):
-        self.is_training = None
-        self.regularizer_conv = None
-        self.regularizer_fc = None
-
         self.op_loss = None
         self.op_accuracy = None
         self.op_logits = None
@@ -40,50 +35,27 @@ class BaseModel:
         self.n_samples_train = None
         self.n_samples_val = None
         self.share_scope = None
+        self.learning_rate = None
 
+        self.cnt_train = 0
         self.layers = list()
+        self.task_name = config['basic']['task_name']
 
-        self.prune_method = config.prune_method
-        if self.prune_method == 'info_bottle':
-            self.kl_factor = config.prune_kl_factor
-            self.prune_threshold = config.prune_threshold
+        if config['basic']['pruning_method'] == 'info_bottle':
             self.kl_total = None
+            self.kl_factor = None
+            self.prune_threshold = config['pruning'].getfloat('pruning_threshold')
 
-        # config of the model
-        self.config = config
-        # init the global step
-        self.init_global_step()
+        self.is_training = tf.placeholder(dtype=tf.bool)
+        self.set_global_tensor(config['train'].getfloat('regularizer_conv'), config['train'].getfloat('regularizer_fc'))
 
-    def save(self, sess):
-        print('Saving model...')
-        self.saver.save(sess, self.config.checkpoint_dir, self.global_step_tensor)
-        print('Model saved')
-
-    # load model from the checkpoint
-    def load(self, sess):
-        latest_checkpoint = tf.train.latest_checkpoint(self.config.checkpoint_dir)
-        if latest_checkpoint:
-            print('Loading model checkpoint {} ...\n'.format(latest_checkpoint))
-            self.saver.restore(sess, latest_checkpoint)
-            print('Model loader')
-
-    # init a tensoflow variable as epoch counter
-    def init_cur_epoch(self):
-        with tf.variable_scope('cur_epoch'):
-            self.cur_epoch_tensor = tf.Variable(0, trainable=False, name='cur_epoch')
-            self.increment_cur_epoch_tensor = tf.assign(self.cur_epoch_tensor, self.cur_epoch_tensor + 1)
-
-    # init a tensorflow variable as epoch counter
-    def init_global_step(self):
-        with tf.variable_scope('global_step'):
-            self.global_step_tensor = tf.Variable(0, trainable=False, name='global_step')
+        self.cfg = config
 
     def load_dataset(self):
         dataset_train, dataset_val, self.total_batches_train, self.n_samples_train, self.n_samples_val = ImageDataGenerator.load_dataset(
-            self.config.batch_size, self.config.cpu_cores, self.task_name, self.imgs_path)
-        self.train_init, self.test_init, self.X, self.Y = ImageDataGenerator.dataset_iterator(
-            dataset_train,
-            dataset_val)
+            self.cfg)
+        self.train_init, self.test_init, self.X, self.Y = ImageDataGenerator.dataset_iterator(dataset_train,
+                                                                                              dataset_val)
 
     def save_weight(self, sess, save_path):
         self.weight_dict = self.fetch_weight(sess)
@@ -100,23 +72,19 @@ class BaseModel:
         print("layer not found!")
         return -1
 
-    def meta_val(self, meta_key):
-        meta_key_in_weight = meta_key
-        if meta_key_in_weight in self.weight_dict:
-            return self.weight_dict[meta_key_in_weight]
-        else:
-            return self.meta_keys_with_default_val[meta_key]
-
     def is_layer_shared(self, layer_name):
         share_key = layer_name + '/is_share'
         if share_key in self.weight_dict:
             return self.weight_dict[share_key]
         return False
 
-    def set_global_tensor(self, training_tensor, regu_conv, regu_fc):
-        self.is_training = training_tensor
-        self.regularizer_conv = regu_conv
-        self.regularizer_fc = regu_fc
+    def set_global_tensor(self, regu_conv, regu_fc):
+        self.regularizer_conv = tf.contrib.layers.l2_regularizer(scale=regu_conv)
+        self.regularizer_fc = tf.contrib.layers.l2_regularizer(scale=regu_fc)
+
+    def save_cfg(self):
+        with open(self.cfg['path']['path_cfg'], 'w') as file:
+            self.cfg.write(file)
 
     @abstractmethod
     def init_saver(self):
@@ -124,10 +92,6 @@ class BaseModel:
 
     @abstractmethod
     def loss(self):
-        pass
-
-    @abstractmethod
-    def predict(self, labels, logits):
         pass
 
     @abstractmethod

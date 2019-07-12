@@ -190,12 +190,17 @@ def construct_labels():
     labels = content[:, 1:]
 
     # 从新取得文件头
-    files = pd.read_csv('/local/home/david/Datasets/deepfashion/labels_20_train_val_path.txt', delim_whitespace=True,
-                        header=None).values[:, 0]
+    # files = pd.read_csv('/local/home/david/Datasets/deepfashion/labels_20_train_val_path.txt', delim_whitespace=True,
+    #                     header=None).values[:, 0]
+
+    files = content[:, 0]
+
+    for i in range(len(files)):
+        files[i] = files[i].replace('img/', '')
 
     files = np.expand_dims(files, 1)
 
-    assert (files, content[:, 0])
+    # assert (files, content[:, 0])
 
     for i in range(10):
         # 每一行做or，结果为[n_sample, 1],值为true或false
@@ -214,7 +219,8 @@ def construct_labels():
 
 import os
 
-if __name__ == '__main__':
+
+def haha():
     content = pd.read_csv('/local/scratch/lfw_attributes.txt', sep='\t').values
 
     name_and_index = content
@@ -225,7 +231,7 @@ if __name__ == '__main__':
         index = line[1]
         labels = line[2:]
         img_path = '/local/scratch/lfw-deepfunneled/' + '{}_{:0>4}.jpg'.format(name.replace(' ', '_'),
-                                                                                             index)
+                                                                               index)
 
         if os.path.exists(img_path):
             labels_res = (labels > 0).astype(int) * 2 - 1
@@ -236,3 +242,10 @@ if __name__ == '__main__':
     # pd.DataFrame(data).to_csv('/local/scratch/labels_deepfunneled.txt', sep=' ', index=False, header=False)
 
     print('fdfd')
+
+
+if __name__ == '__main__':
+    data = pd.read_csv('/local/home/david/Datasets/deepfashion/labels_10_train_val_path.txt', header=None,
+                       sep=' ').values[:, 1:]
+    w = pickle.load(open('/local/home/david/Datasets/deepfashion/partition_deepfashion.pickle', 'rb'))
+    print('dfd')

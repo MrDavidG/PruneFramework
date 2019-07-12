@@ -81,51 +81,56 @@ class ImageDataGenerator(DataGenerator):
         return image, label
 
     @staticmethod
-    def load_dataset(batch_size, cpu_cores, dataset_name, imgs_path, data_file='../datasets/datasets_mean_std.pickle'):
+    def load_dataset(cfg, data_file='../dataset/datasets_mean_std.pickle'):
+        def get_partition(path_partition, n_samples):
+            if os.path.exists(path_partition):
+                partition_list = pickle.load(open(path_partition, 'rb'))
+            else:
+                partition_list = np.ones(n_samples)
+                partition_list[np.random.choice(len(filepath_list), size=len(filepath_list) // 5, replace=False)] = 0
+                pickle.dump(partition_list, open(path_partition, 'wb'))
+            return partition_list
+
+        dataset_name = cfg['data']['dataset_name']
+        path_partition = cfg['data']['path_partition']
+        path_data = ''
 
         # 数据的组织形式不同
-        if dataset_name in ['celeba1', 'celeba2', 'celeba']:
-            # Read paths of images
-
-            # 这里有个顺序问题!!!!
+        if dataset_name.startswith('celeba'):
+            # Data is stored in one directory
             filepath_list = np.array(
-                [imgs_path + 'img_align_celeba/' + x for x in sorted(os.listdir(imgs_path + 'img_align_celeba/'))])
+                ['/local/home/david/Datasets/celeba/img_align_celeba/' + x for x in
+                 sorted(os.listdir('/local/home/david/Datasets/celeba/img_align_celeba/'))])
 
             # Read labels according to dataset_name
             if dataset_name == 'celeba1':
-                labels_all = pd.read_csv(imgs_path + 'list_attr_celeba.txt', delim_whitespace=True,
-                                         header=None).values[:, 1:21]
+                labels_all = pd.read_csv('/local/home/david/Datasets/celeba/list_attr_celeba.txt',
+                                         delim_whitespace=True, header=None).values[:, 1:21]
             elif dataset_name == 'celeba2':
-                labels_all = pd.read_csv(imgs_path + 'list_attr_celeba.txt', delim_whitespace=True,
-                                         header=None).values[:, 21:]
+                labels_all = pd.read_csv('/local/home/david/Datasets/celeba/list_attr_celeba.txt',
+                                         delim_whitespace=True, header=None).values[:, 21:]
             elif dataset_name == 'celeba':
-                labels_all = pd.read_csv(imgs_path + 'list_attr_celeba.txt', delim_whitespace=True, header=None).values[
-                             :, 1:]
+                labels_all = pd.read_csv('/local/home/david/Datasets/celeba/list_attr_celeba.txt',
+                                         delim_whitespace=True, header=None).values[:, 1:]
             labels_list = np.array(labels_all, dtype=np.float32)
 
             # Split train and test dataset
-            partition_path_list = imgs_path + 'partition_celeba.pickle'
-            if os.path.exists(partition_path_list):
-                partition_list = pickle.load(open(partition_path_list, 'rb'))
-            else:
-                partition_list = np.ones(len(filepath_list))
-                partition_list[
-                    np.random.choice(len(filepath_list), size=len(filepath_list) // 5, replace=False)] = 0
-                pickle.dump(partition_list, open(partition_path_list, 'wb'))
+            partition_list = get_partition(path_partition, len(filepath_list))
 
             n_classes = labels_list.shape[1]
 
             filepath_list_train = filepath_list[partition_list == 1]
-            labels_train = labels_list[partition_list == 1]
-
             filepath_list_val = filepath_list[partition_list == 0]
+
+            labels_train = labels_list[partition_list == 1]
             labels_val = labels_list[partition_list == 0]
 
             dataset_name = 'celeba'
 
-        elif dataset_name in ['lfw1', 'lfw2', 'lfw']:
+        elif dataset_name.startswith('lfw'):
             # Read paths of images
-            imgs_labels = pd.read_csv('/local/scratch/labels_deepfunneled.txt', delim_whitespace=True, header=None).values
+            imgs_labels = pd.read_csv('/local/scratch/labels_deepfunneled.txt', delim_whitespace=True,
+                                      header=None).values
             filepath_list = np.array(imgs_labels[:, 0])
 
             if dataset_name == 'lfw1':
@@ -138,60 +143,84 @@ class ImageDataGenerator(DataGenerator):
             labels_list = np.array(labels_all, dtype=np.float32)
 
             # Split train and test dataset
-            partition_path_list = imgs_path + 'partition_deepfunneled.pickle'
-            if os.path.exists(partition_path_list):
-                partition_list = pickle.load(open(partition_path_list, 'rb'))
-            else:
-                partition_list = np.ones(len(filepath_list))
-                partition_list[np.random.choice(len(filepath_list), size=len(filepath_list) // 5, replace=False)] = 0
-                pickle.dump(partition_list, open(partition_path_list, 'wb'))
+            partition_list = get_partition(path_partition, len(filepath_list))
 
             n_classes = labels_list.shape[1]
 
             filepath_list_train = filepath_list[partition_list == 1]
-            labels_train = labels_list[partition_list == 1]
-
             filepath_list_val = filepath_list[partition_list == 0]
+
+            labels_train = labels_list[partition_list == 1]
             labels_val = labels_list[partition_list == 0]
 
             dataset_name = 'lfw'
 
-        else:
-            imgs_path_train = imgs_path + 'train/'
-            imgs_path_val = imgs_path + 'val/'
-            if dataset_name == 'imagenet12':
-                classes_path_list_train = np.array([imgs_path_train + str(x) + '/' for x in range(1000)])
-                classes_path_list_val = np.array([imgs_path_val + str(x) + '/' for x in range(1000)])
-            else:
-                classes_path_list_train = np.array(
-                    [imgs_path_train + x + '/' for x in sorted(os.listdir(imgs_path_train))])
-                classes_path_list_val = np.array([imgs_path_val + x + '/' for x in sorted(os.listdir(imgs_path_val))])
-            n_classes = len(classes_path_list_train)
+        elif dataset_name.startswith('deepfashion'):
 
-            filepath_list_train = []
-            labels_train = []
-            for i in range(len(classes_path_list_train)):
-                classes_path = classes_path_list_train[i]
-                # the path of the images under this label directory
-                tmp = [classes_path + x for x in sorted(os.listdir(classes_path))]
-                # the file path of all the training images
-                filepath_list_train += tmp
-                # the labels of all the training images (the labels are encoded by the order in the list)
-                labels_train += (np.ones(len(tmp)) * i).tolist()
+            content = pd.read_csv('/local/home/david/Datasets/deepfashion/labels_10_train_val_path.txt', sep=' ',
+                                  header=None).values
 
-            filepath_list_train = np.array(filepath_list_train)
-            labels_train = np.array(labels_train, dtype=np.int32)
+            filepath_list = content[:, 0]
 
-            filepath_list_val = []
-            labels_val = []
-            for i in range(len(classes_path_list_val)):
-                classes_path = classes_path_list_val[i]
-                tmp = [classes_path + x for x in sorted(os.listdir(classes_path))]
-                filepath_list_val += tmp
-                labels_val += (np.ones(len(tmp)) * i).tolist()
+            if dataset_name == 'deepfashion1':
+                labels_all = content[:, 1:6]
+            elif dataset_name == 'deepfashion2':
+                labels_all = content[:, 6:11]
+            elif dataset_name == 'deepfashion':
+                labels_all = content[:, 1:]
 
-            filepath_list_val = np.array(filepath_list_val)
-            labels_val = np.array(labels_val, dtype=np.int32)
+            labels_list = np.array(labels_all, dtype=np.float32)
+
+            # Split train and test dataset
+            partition_list = get_partition(path_partition, len(filepath_list))
+            n_classes = labels_list.shape[1]
+
+            filepath_list_train = filepath_list[partition_list == 1]
+            filepath_list_val = filepath_list[partition_list == 0]
+
+            labels_train = labels_list[partition_list == 1]
+            labels_val = labels_list[partition_list == 0]
+
+            dataset_name = 'deepfashion'
+            path_data = '/local/home/david/Datasets/deepfashion/img/'
+        # 这段代码是对imagenet用的
+        # else:
+        #     # Data is stored in directories of train and val
+        #     imgs_path_train = imgs_path + 'train/'
+        #     imgs_path_val = imgs_path + 'val/'
+        #     if dataset_name == 'imagenet12':
+        #         classes_path_list_train = np.array([imgs_path_train + str(x) + '/' for x in range(1000)])
+        #         classes_path_list_val = np.array([imgs_path_val + str(x) + '/' for x in range(1000)])
+        #     else:
+        #         classes_path_list_train = np.array(
+        #             [imgs_path_train + x + '/' for x in sorted(os.listdir(imgs_path_train))])
+        #         classes_path_list_val = np.array([imgs_path_val + x + '/' for x in sorted(os.listdir(imgs_path_val))])
+        #     n_classes = len(classes_path_list_train)
+        #
+        #     filepath_list_train = []
+        #     labels_train = []
+        #     for i in range(len(classes_path_list_train)):
+        #         classes_path = classes_path_list_train[i]
+        #         # the path of the images under this label directory
+        #         tmp = [classes_path + x for x in sorted(os.listdir(classes_path))]
+        #         # the file path of all the training images
+        #         filepath_list_train += tmp
+        #         # the labels of all the training images (the labels are encoded by the order in the list)
+        #         labels_train += (np.ones(len(tmp)) * i).tolist()
+        #
+        #     filepath_list_train = np.array(filepath_list_train)
+        #     labels_train = np.array(labels_train, dtype=np.int32)
+        #
+        #     filepath_list_val = []
+        #     labels_val = []
+        #     for i in range(len(classes_path_list_val)):
+        #         classes_path = classes_path_list_val[i]
+        #         tmp = [classes_path + x for x in sorted(os.listdir(classes_path))]
+        #         filepath_list_val += tmp
+        #         labels_val += (np.ones(len(tmp)) * i).tolist()
+        #
+        #     filepath_list_val = np.array(filepath_list_val)
+        #     labels_val = np.array(labels_val, dtype=np.int32)
 
         # Get mean and std values
         handler = open(data_file, 'rb')
@@ -204,7 +233,7 @@ class ImageDataGenerator(DataGenerator):
 
         # Get number of samples
         n_sample_train = len(labels_train)
-        total_batches_train = n_sample_train // batch_size + 1
+        total_batches_train = n_sample_train // cfg['basic'].getint('batch_size') + 1
         n_samples_val = len(labels_val)
 
         # Build tf graph
@@ -223,6 +252,7 @@ class ImageDataGenerator(DataGenerator):
             'omniglot': 72,
             'svhn': 72,
             'daimlerpedcls': 72,
+            'deepfashion': 72,
             'cifar10': 32
         }
 
@@ -231,25 +261,26 @@ class ImageDataGenerator(DataGenerator):
         dataset_train = dataset_train.shuffle(buffer_size=100000)
 
         dataset_train = dataset_train.map(
-            map_func=lambda x, y: ImageDataGenerator.parse_image_train(x, y, dataset_name, means_tensor, stds_tensor,
+            map_func=lambda x, y: ImageDataGenerator.parse_image_train(path_data + x, y, dataset_name, means_tensor,
+                                                                       stds_tensor,
                                                                        n_classes, resize_dict),
-            num_parallel_calls=cpu_cores)
-        dataset_train = dataset_train.batch(batch_size)
+            num_parallel_calls=cfg['basic'].getint('cpu_cores'))
+        dataset_train = dataset_train.batch(cfg['basic'].getint('batch_size'))
         dataset_train = dataset_train.prefetch(buffer_size=1)
 
         dataset_val = tf.data.Dataset.from_tensor_slices((file_paths_val, labels_val))
 
         dataset_val = dataset_val.map(
-            map_func=lambda x, y: ImageDataGenerator.parse_image_val(x, y, dataset_name, means_tensor, stds_tensor,
+            map_func=lambda x, y: ImageDataGenerator.parse_image_val(path_data + x, y, dataset_name, means_tensor,
+                                                                     stds_tensor,
                                                                      n_classes, resize_dict),
-            num_parallel_calls=cpu_cores)
-        dataset_val = dataset_val.batch(batch_size)
+            num_parallel_calls=cfg['basic'].getint('cpu_cores'))
+        dataset_val = dataset_val.batch(cfg['basic'].getint('batch_size'))
         dataset_val = dataset_val.prefetch(buffer_size=1)
 
         return dataset_train, dataset_val, total_batches_train, n_sample_train, n_samples_val
 
-
-if __name__ == '__main__':
-    handler = open('../datasets/decathlon_mean_std.pickle', 'rb')
-    dict_mean_std = pickle.load(handler, encoding='bytes')
-    print(dict_mean_std)
+# if __name__ == '__main__':
+#     handler = open('../dataset/decathlon_mean_std.pickle', 'rb')
+#     dict_mean_std = pickle.load(handler, encoding='bytes')
+#     print(dict_mean_std)

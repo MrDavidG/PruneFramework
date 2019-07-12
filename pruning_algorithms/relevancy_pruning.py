@@ -13,7 +13,7 @@ Description.
 import sys
 
 sys.path.append(r"/local/home/david/Remote/")
-from utils.config import process_config
+from utils.configer import process_config
 from models.vgg_cifar100 import VGGNet
 from models.resnet_model import ResNet
 from datetime import datetime
@@ -234,7 +234,7 @@ def neuron_relevancy_pruning(sess, task_name, model, threshold_MI, name_save='rb
     # Retrain the model
     print('\n[%s]: Retrain the model' % (datetime.now()))
 
-    config_retrain = process_config("../configs/vgg_net.json")
+    config_retrain = process_config("../config/vgg_net.json")
 
     # Retrain
     tf.reset_default_graph()
@@ -264,7 +264,7 @@ def neuron_relevancy_pruning(sess, task_name, model, threshold_MI, name_save='rb
 
 if __name__ == '__main__':
     # Obtain a pre-train model
-    config = process_config("../configs/rb_vgg.json")
+    config = process_config("../config/rb_vgg.json")
     # apply video memory dynamically
     gpu_config = tf.ConfigProto(intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True

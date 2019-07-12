@@ -17,7 +17,7 @@ from models.base_model import BaseModel
 from layers.conv_layer import ConvLayer
 from layers.fc_layer import FullConnectedLayer
 from layers.ib_layer import InformationBottleneckLayer
-from utils.config import process_config
+from utils.configer import process_config
 from datetime import datetime
 
 import numpy as np
@@ -574,7 +574,7 @@ def get_inference_time(ib_threshold, n_class, task_name, model_path):
     weight_dict, mask_res_list = get_mask_result(model_path=model_path, n_class=n_class, ib_threshold=ib_threshold)
 
     # 接下来进行重新inference
-    config = process_config("../configs/ib_vgg.json")
+    config = process_config("../config/config.json")
 
     gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True
@@ -607,7 +607,7 @@ def get_inference_time_two(ib_threshold, n_class, task_name, model_path_1, model
                                                      ib_threshold=ib_threshold)
 
     # 接下来进行重新inference
-    config = process_config("../configs/ib_vgg.json")
+    config = process_config("../config/config.json")
 
     gpu_config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True

@@ -18,8 +18,8 @@ from models.base_model import BaseModel
 from layers.conv_layer import ConvLayer
 from layers.fc_layer import FullConnectedLayer
 from layers.ib_layer import InformationBottleneckLayer
-from utils.config import process_config
-from utils.time_stamp import print_with_time_stamp as print_
+from utils.configer import process_config
+
 
 import tensorflow as tf
 import numpy as np
@@ -357,7 +357,7 @@ class VGGNet(BaseModel):
 
 if __name__ == '__main__':
 
-    config = process_config("../configs/vgg_net.json")
+    config = process_config("../config/vgg_net.json")
     # apply video memory dynamically
     gpu_config = tf.ConfigProto(intra_op_parallelism_threads=4)
     gpu_config.gpu_options.allow_growth = True
