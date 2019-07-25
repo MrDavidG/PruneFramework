@@ -42,9 +42,8 @@ class BaseModel:
         self.task_name = config['basic']['task_name']
 
         if config['basic']['pruning_method'] == 'info_bottle':
-            self.kl_total = None
-            self.kl_factor = None
-            self.prune_threshold = config['pruning'].getfloat('pruning_threshold')
+            self.kl_total = 0
+            self.kl_factor = 0
 
         self.is_training = tf.placeholder(dtype=tf.bool)
         self.set_global_tensor(config['train'].getfloat('regularizer_conv'), config['train'].getfloat('regularizer_fc'))

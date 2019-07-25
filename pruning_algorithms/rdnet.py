@@ -33,7 +33,7 @@ import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 # gpu 0
-# os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4eec6600-f5e3-f385-9b14-850ae9a2b236'
+os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4eec6600-f5e3-f385-9b14-850ae9a2b236'
 # gpu 1
 # os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4b0856cd-c698-63a2-0b6e-9a33d380f9c4'
 
@@ -116,6 +116,10 @@ def cluster_neurons(y_a, y_b, layers_output_list_a, layers_output_list_b, cluste
 
     cluster_res_list = list()
 
+    # Save cluster results
+    if not os.path.exists(path_save + '/cluster_results/'):
+        os.mkdir(path_save + '/cluster_results/')
+
     # Init for all layers to store cluster res
     for layer_index in range(15):
         n_neuron_total = dim_list[layer_index] * 2
@@ -177,17 +181,17 @@ def cluster_neurons(y_a, y_b, layers_output_list_a, layers_output_list_b, cluste
 
         min_index_neuron, mi_min = argmin_marginal_mi(layer_output_all, F_B, cluster_res_list[layer_index]['B'],
                                                       labelixs_a, labelprobs_a, entropy_func_upper)
-        log('MI with Y_A, No. 1: Min_index_neuron=%d,  mi_min=%f' % (min_index_neuron, mi_min))
+        log_t('MI with Y_A, No. 1: Min_index_neuron=%d,  mi_min=%f' % (min_index_neuron, mi_min))
         count_b = 1
 
         F_B.remove(min_index_neuron)
         cluster_res_list[layer_index]['B'].append(min_index_neuron)
 
-        while min <= alpha_threshold:
+        while mi_min <= alpha_threshold:
             min_index_neuron, mi_min = argmin_marginal_mi(layer_output_all, F_B, cluster_res_list[layer_index]['B'],
                                                           labelixs_a, labelprobs_a, entropy_func_upper)
             count_b += 1
-            log('MI with Y_A, No.%d: Min_index_neuron=%d,  mi_min=%f' % (count_b, min_index_neuron, mi_min))
+            log_t('MI with Y_A, No.%d: Min_index_neuron=%d,  mi_min=%f' % (count_b, min_index_neuron, mi_min))
             cluster_res_list[layer_index]['B'].append(min_index_neuron)
             F_B.remove(min_index_neuron)
 
@@ -203,9 +207,9 @@ def cluster_neurons(y_a, y_b, layers_output_list_a, layers_output_list_b, cluste
         cluster_res_list[layer_index]['A'] = list(set(cluster_res_list[layer_index]['A']) - union)
         cluster_res_list[layer_index]['B'] = list(set(cluster_res_list[layer_index]['B']) - union)
 
-        # 保存每一层的结果，防止丢失
-        path = path_save + '/cluster_results/cluster_layer-%d_threshold-%f' % (layer_index, alpha_threshold)
-        pickle.dump(cluster_res_list[layer_index], open(path, 'wb'))
+        # 保存layer_index层之前的所有结果，防止丢失
+        path = path_save + '/cluster_results/cluster_layer-%d_threshold-%s' % (layer_index, str(alpha_threshold))
+        pickle.dump(cluster_res_list[:layer_index + 1], open(path, 'wb'))
 
     # Save the final result
     path = path_save + '/cluster_results/cluster_result_threshold-%s' % str(cluster_threshold_dict)
@@ -229,7 +233,7 @@ def model_summary(cluster_res_list):
 
 def get_cluster_res(cfg):
     path_cluster_res = cfg['cluster']['path_cluster_res']
-    if path_cluster_res is None:
+    if path_cluster_res == 'None':
         layers_output_list_a, labels_a = get_layers_output(model_path=cfg['basic']['model_a'])
         layers_output_list_b, labels_b = get_layers_output(model_path=cfg['basic']['model_b'])
 
@@ -287,8 +291,10 @@ def get_connection_signal(cluster_res_list):
 
 
 def retrain_model(cfg, cluster_res_list):
+    log_t('Loading weights of model a and b ...')
     weight_a = pickle.load(open(cfg['basic']['model_a'], 'rb'))
     weight_b = pickle.load(open(cfg['basic']['model_b'], 'rb'))
+    log_t('Done')
 
     signal_list = get_connection_signal(cluster_res_list)
 
@@ -306,7 +312,12 @@ def retrain_model(cfg, cluster_res_list):
 def obtain_cfg(task_name, model_path_a, model_path_b, pruning_set, cluster_set):
     # cfg
     time_stamp = str(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-    cfg = get_cfg(task_name, time_stamp)
+    cfg = get_cfg(task_name, time_stamp, suffix='rdnet')
+
+    # Create exp dir
+    if not os.path.exists(cfg['path']['path_save']):
+        os.mkdir(cfg['path']['path_save'])
+        log_t('Create directory %s' % cfg['path']['path_save'])
 
     cfg.set('basic', 'model_a', model_path_a)
     cfg.set('basic', 'model_b', model_path_b)
@@ -317,7 +328,7 @@ def obtain_cfg(task_name, model_path_a, model_path_b, pruning_set, cluster_set):
 
     cfg.add_section('cluster')
     for option in cluster_set.keys():
-        cfg.set('cluster', option, str(cluster_set[option]))
+        cfg.set('cluster', option, str(cluster_set[option]).replace("\'", "\""))
 
     return cfg
 
@@ -331,18 +342,22 @@ def pruning(task_name, model_path_a, model_path_b, pruning_set, cluster_set):
     # Cluster
     cluster_res_list = get_cluster_res(cfg)
 
+    # Save cfg
+    with open(cfg['path']['path_cfg'], 'w') as file:
+        cfg.write(file)
+
     # Retrain
-    retrain_model(cfg, cluster_res_list)
+    # retrain_model(cfg, cluster_res_list)
 
 
 if __name__ == '__main__':
-    pruning(task_name='deepfashion',
-            model_path_a='',
-            model_path_b='',
+    pruning(task_name='celeba',
+            model_path_a='/local/home/david/Remote/PruneFramework/exp_files/celeba1-2019-07-13 10:39:27/tr00-epo010-acc0.9069',
+            model_path_b='/local/home/david/Remote/PruneFramework/exp_files/celeba2-2019-07-15 10:07:34/tr00-epo010-acc0.8892',
             cluster_set={
                 'path_cluster_res': None,
-                'cluster_threshold_dict': {'conv': 0.2, 'fc': 8},
-                'cluster_layer_range': [13, 14]
+                'cluster_threshold_dict': {"conv": 0.2, "fc": 8},
+                'cluster_layer_range': [x for x in range(15)]
             },
             pruning_set={
                 'gamma_conv': -1,

@@ -266,9 +266,9 @@ class VGG_Combined(BaseModel):
 
         def get_ib(y, layer_type, kl_mult, partition_name):
             if layer_type == 'C_ib':
-                mask_threshold = self.cfg['pruning']['prune_threshold_conv']
+                mask_threshold = self.cfg['pruning'].getfloat('prune_threshold_conv')
             elif layer_type == 'F_ib':
-                mask_threshold = self.cfg['pruning']['prune_threshold_fc']
+                mask_threshold = self.cfg['pruning'].getfloat('prune_threshold_fc')
             if self.cfg['basic']['pruning_method'] == 'info_bottle':
                 ib_layer = InformationBottleneckLayer(y, layer_type=layer_type, weight_dict=self.weight_dict,
                                                       is_training=self.is_training, kl_mult=kl_mult,
@@ -855,11 +855,10 @@ class VGG_Combined(BaseModel):
                 layers_name_list += [layer.layer_name]
                 layers_type += [layer.layer_type]
 
-                threshold_dict = json.loads(self.cfg['pruning']['cluster_threshold_dict'])
                 if layer.layer_type == 'C_ib':
-                    masks += [layer.get_mask(threshold=threshold_dict['conv'])]
+                    masks += [layer.get_mask(threshold=self.cfg['pruning'].getfloat('ib_threshold_conv'))]
                 elif layer.layer_type == 'F_ib':
-                    masks += [layer.get_mask(threshold=threshold_dict['fc'])]
+                    masks += [layer.get_mask(threshold=self.cfg['pruning'].getfloat('ib_threshold_fc'))]
 
         # 获得具体的mask
         masks = sess.run(masks)

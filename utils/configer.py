@@ -15,7 +15,7 @@ from utils.logger import logger
 import configparser
 
 
-def get_cfg(dataset_name, time_stamp, file_cfg_model=None, file_cfg_global='global.cfg'):
+def get_cfg(dataset_name, time_stamp, file_cfg_model=None, file_cfg_global='global.cfg', suffix=''):
     cfg_global = load_cfg('../config/' + file_cfg_global)
 
     # Get model cfg
@@ -39,7 +39,10 @@ def get_cfg(dataset_name, time_stamp, file_cfg_model=None, file_cfg_global='glob
 
     cfg_global['basic']['task_name'] = dataset_name
     cfg_global['basic']['time_stamp'] = time_stamp
-    cfg_global['path']['path_save'] += '%s-%s' % (dataset_name, time_stamp)
+    if suffix is None:
+        cfg_global['path']['path_save'] += '%s-%s' % (dataset_name, time_stamp)
+    else:
+        cfg_global['path']['path_save'] += '%s-%s-%s' % (dataset_name, suffix, time_stamp)
     cfg_global['path']['path_cfg'] = cfg_global['path']['path_save'] + '/cfg.ini'
     cfg_global['path']['path_log'] = cfg_global['path']['path_save'] + '/log.log'
     cfg_global['path']['path_dataset'] = cfg_global['path']['path_dataset'] + cfg_global['basic']['task_name'] + '/'

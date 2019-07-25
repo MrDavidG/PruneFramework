@@ -31,12 +31,14 @@ import os
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
+
 # gpu 0
 # os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4eec6600-f5e3-f385-9b14-850ae9a2b236'
 
 
 # gpu 1
 # os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4b0856cd-c698-63a2-0b6e-9a33d380f9c4'
+
 
 class VGGNet(BaseModel):
     def __init__(self, config, musk=False):
@@ -116,8 +118,10 @@ class VGGNet(BaseModel):
         return weight_dict
 
     def set_kl_factor(self, kl_factor):
+        log_l('kl_factor: %f' % kl_factor)
         self.kl_factor = kl_factor
         self.loss()
+        # self.optimize 在train函数中调用
 
     def inference(self):
         """
@@ -153,7 +157,7 @@ class VGGNet(BaseModel):
                                                                   is_training=self.is_training,
                                                                   kl_mult=kl_mult,
                                                                   mask_threshold=self.cfg['pruning'].getfloat(
-                                                                      'prune_threshold'))
+                                                                      'pruning_threshold'))
 
                             self.layers.append(ib_layer)
                             y, ib_kld = ib_layer.layer_output
@@ -178,8 +182,8 @@ class VGGNet(BaseModel):
                         ib_layer = InformationBottleneckLayer(y, layer_type='F_ib', weight_dict=self.weight_dict,
                                                               is_training=self.is_training,
                                                               kl_mult=self.cfg['pruning'].getfloat('gamma_fc'),
-                                                              mask_threshold=self.cfg['basic'].getfloat(
-                                                                  'prune_threshold'))
+                                                              mask_threshold=self.cfg['pruning'].getfloat(
+                                                                  'pruning_threshold'))
 
                         self.layers.append(ib_layer)
                         y, ib_kld = ib_layer.layer_output
@@ -207,8 +211,8 @@ class VGGNet(BaseModel):
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
         with tf.control_dependencies(update_ops):
             with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
-                self.opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=0.9,
-                                                      use_nesterov=True)
+                # self.opt = tf.train.AdamOptimizer(learning_rate=lr)
+                self.opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=0.9, use_nesterov=True)
 
                 self.op_opt = self.opt.minimize(self.op_loss)
 
@@ -238,7 +242,7 @@ class VGGNet(BaseModel):
                 if self.cfg['basic']['pruning_method'] == 'info_bottle':
                     _, loss, accuracy_batch, kl = sess.run([self.op_opt, self.op_loss, self.op_accuracy, self.kl_total],
                                                            feed_dict={self.is_training: True})
-                    total_kl += kl
+                    total_kl += kl * self.kl_factor
                 else:
                     _, loss, accuracy_batch = sess.run([self.op_opt, self.op_loss, self.op_accuracy],
                                                        feed_dict={self.is_training: True})
@@ -248,13 +252,13 @@ class VGGNet(BaseModel):
                 n_batches += 1
 
                 if n_batches % 5 == 0:
-                    str_ = 'epoch={:d}, batch={:d}/{:d}, curr_loss={:f}, train_acc={:%}, train_kl={:f}, used_time:{:.2f}s'.format(
+                    str_ = 'epoch={:d}, batch={:d}/{:d}, curr_loss={:f}, curr_kl={:f}, train_acc={:%}, used_time:{:.2f}s'.format(
                         epoch + 1,
                         n_batches,
                         self.total_batches_train,
                         total_loss / n_batches,
-                        total_correct_preds / (n_batches * self.cfg['basic'].getint('batch_size')),
                         total_kl / n_batches,
+                        total_correct_preds / (n_batches * self.cfg['basic'].getint('batch_size')),
                         time.time() - time_last)
 
                     print('\r' + str_, end=' ')
@@ -370,7 +374,7 @@ class VGGNet(BaseModel):
         masks = list()
         for layer in self.layers:
             if layer.layer_type == 'C_ib' or layer.layer_type == 'F_ib':
-                masks += [layer.get_mask(threshold=self.prune_threshold)]
+                masks += [layer.get_mask(threshold=self.cfg['pruning'].getfloat('pruning_threshold'))]
 
         masks = sess.run(masks)
         n_classes = self.Y.shape.as_list()[1]
@@ -484,11 +488,12 @@ def exp(task_names, path_models, pruning, pruning_set, plan_train_normal, plan_t
         # Pre test
         log_l('Pre test')
         model.eval_once(sess, model.test_init, -1)
-        # model.get_CR(sess)
-        log_l('')
 
         # Train
         if pruning:
+            model.get_CR(sess)
+            log_l('')
+
             for plan in plan_train_vib:
                 model.set_kl_factor(plan['kl_factor'])
 
@@ -496,6 +501,7 @@ def exp(task_names, path_models, pruning, pruning_set, plan_train_normal, plan_t
                     model.train(sess=sess, n_epochs=set_['n_epochs'], lr=set_['lr'])
                 model.save_cfg()
         else:
+            log_l('')
             for plan in plan_train_normal:
                 model.train(sess=sess, n_epochs=plan['n_epochs'], lr=plan['lr'])
                 model.save_cfg()
@@ -508,26 +514,28 @@ if __name__ == '__main__':
     tasks_deepfashion = ['deepfashion1', 'deepfashion2', 'deepfashion']
 
     plan_train_vib = [
-        {'kl_factor': 4e-5,
-         'train': [{'n_epochs': 30, 'lr': 0.1},
-                   {'n_epochs': 30, 'lr': 0.01},
-                   {'n_epochs': 30, 'lr': 0.001}]},
-        {'kl_factor': 2e-7,
-         'train': {'n_epochs': 10, 'lr': 0.1}}
+        {'kl_factor': 1e-5,
+         'train': [{'n_epochs': 30, 'lr': 0.01}]},
+        {'kl_factor': 1e-6,
+         'train': [{'n_epochs': 10, 'lr': 0.01}]}
     ]
 
     plan_train_normal = [{'n_epochs': 20, 'lr': 0.01},
                          {'n_epochs': 20, 'lr': 0.001},
-                         {'n_epochs': 0, 'lr': 0.001}]
+                         {'n_epochs': 20, 'lr': 0.0001}]
 
     # 执行实验代码
-    exp(task_names=['deepfashion1'],
+    exp(task_names=['lfw'],
         path_models=None,
+        # [
+        #     '/local/home/david/Remote/PruneFramework/exp_files/celeba2-2019-07-15 10:07:34/tr00-epo010-acc0.8892',
+        #     '/local/home/david/Remote/PruneFramework/exp_files/celeba-2019-07-15 12:11:15/tr00-epo010-acc0.8981',
+        # ],
         pruning=False,
         pruning_set={
             'name': 'info_bottle',
             'gamma_conv': 1.,
-            'gamma_fc': 15,
+            'gamma_fc': 15.,
             'pruning_threshold': 0.01
         },
         plan_train_normal=plan_train_normal,
