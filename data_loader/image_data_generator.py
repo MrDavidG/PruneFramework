@@ -15,6 +15,7 @@ import tensorflow as tf
 import pandas as pd
 import numpy as np
 import pickle
+import json
 import os
 
 
@@ -139,6 +140,8 @@ class ImageDataGenerator(DataGenerator):
                 labels_all = imgs_labels[:, 21:41]
             elif dataset_name == 'lfw':
                 labels_all = imgs_labels[:, 1:41]
+            else:
+                labels_all = imgs_labels[:, json.loads(cfg['data']['index'])]
 
             labels_list = np.array(labels_all, dtype=np.float32)
 
@@ -153,6 +156,7 @@ class ImageDataGenerator(DataGenerator):
             labels_train = labels_list[partition_list == 1]
             labels_val = labels_list[partition_list == 0]
 
+            # 这里是用来指导下一步如何做图片处理的
             dataset_name = 'lfw'
 
         elif dataset_name.startswith('deepfashion'):

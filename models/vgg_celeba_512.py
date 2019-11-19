@@ -37,13 +37,14 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
 # gpu 1
-# os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4b0856cd-c698-63a2-0b6e-9a33d380f9c4'
+os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4b0856cd-c698-63a2-0b6e-9a33d380f9c4'
 
 
 class VGGNet(BaseModel):
     def __init__(self, config, musk=False):
         super(VGGNet, self).__init__(config)
 
+        self.n_fc = 512
         # Used for lobs
         self.is_musked = musk
 
@@ -77,14 +78,16 @@ class VGGNet(BaseModel):
 
         # fc layers
         dim_fc = np.int(self.X.shape[2] // 32) ** 2 * 512
-        weight_dict['fc6/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / dim_fc), size=[dim_fc, 512]).astype(
+        weight_dict['fc6/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / dim_fc),
+                                                      size=[dim_fc, self.n_fc]).astype(
             dtype=np.float32)
-        weight_dict['fc6/biases'] = bias_variable([512])
-        weight_dict['fc7/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / 512), size=[512, 512]).astype(
+        weight_dict['fc6/biases'] = bias_variable([self.n_fc])
+        weight_dict['fc7/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / self.n_fc),
+                                                      size=[self.n_fc, self.n_fc]).astype(
             np.float32)
-        weight_dict['fc7/biases'] = bias_variable([512])
-        weight_dict['fc8/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / 512),
-                                                      size=[512, self.n_classes]).astype(np.float32)
+        weight_dict['fc7/biases'] = bias_variable([self.n_fc])
+        weight_dict['fc8/weights'] = np.random.normal(loc=0, scale=np.sqrt(1. / self.n_fc),
+                                                      size=[self.n_fc, self.n_classes]).astype(np.float32)
         weight_dict['fc8/biases'] = bias_variable([self.n_classes])
 
         return weight_dict
@@ -98,7 +101,7 @@ class VGGNet(BaseModel):
                              256, 256, 256,
                              512, 512, 512,
                              512, 512, 512,
-                             512, 512])
+                             self.n_fc, self.n_fc])
         for i, name_layer in enumerate(['conv1_1', 'conv1_2',
                                         'conv2_1', 'conv2_2',
                                         'conv3_1', 'conv3_2', 'conv3_3',
@@ -392,7 +395,7 @@ class VGGNet(BaseModel):
                                    256, 256, 256,
                                    512, 512, 512,
                                    512, 512, 512,
-                                   512, 512]):
+                                   self.n_fc, self.n_fc]):
 
             if n < 13:
                 # Conv
@@ -524,8 +527,28 @@ if __name__ == '__main__':
                          {'n_epochs': 20, 'lr': 0.001},
                          {'n_epochs': 20, 'lr': 0.0001}]
 
+    # ['lfw_0', 'lfw_0_27', 'lfw_0_32',
+    #  'lfw_1', 'lfw_1_17', 'lfw_1_42',
+    #  'lfw_2', 'lfw_2_0', 'lfw_2_66',
+    # 'lfw_5', 'lfw_5_17', 'lfw_5_18']
+
+    gpu0 = [
+        'lfw__27', 'lfw__32',
+        'lfw__11', 'lfw__16',
+        'lfw__20', 'lfw__46',
+        'lfw__18', 'lfw__42',
+    ]
+    gpu1 = [
+        'lfw__17',
+        'lfw__8', 'lfw__58',
+        'lfw__66', 'lfw__70',
+        'lfw__0',
+        'lfw__68'
+    ]
+
     # 执行实验代码
-    exp(task_names=['lfw'],
+    exp(
+        task_names=gpu1,
         path_models=None,
         # [
         #     '/local/home/david/Remote/PruneFramework/exp_files/celeba2-2019-07-15 10:07:34/tr00-epo010-acc0.8892',
@@ -540,4 +563,4 @@ if __name__ == '__main__':
         },
         plan_train_normal=plan_train_normal,
         plan_train_vib=plan_train_vib
-        )
+    )

@@ -71,6 +71,12 @@ class BaseModel:
         print("layer not found!")
         return -1
 
+    def get_layer_by_name(self, layer_name):
+        for layer in self.layers:
+            if layer.layer_name == layer_name:
+                return layer
+        return None
+
     def is_layer_shared(self, layer_name):
         share_key = layer_name + '/is_share'
         if share_key in self.weight_dict:

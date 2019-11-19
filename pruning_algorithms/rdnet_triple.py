@@ -5,17 +5,18 @@
 
 @version: 1.0
 @license: Apache Licence
-@file: rdnet.py
-@time: 2019-07-10 16:00
+@file: rdnet_triple
+@time: 2019-09-18 10:37
 
 Description. 
 """
+
 import sys
 from typing import Optional, Any
 
 sys.path.append(r"/local/home/david/Remote/PruneFramework")
 
-from models.vgg_combine import VGG_Combined
+from models.vgg_combine_triple import VGG_Combined
 from models.vgg_celeba_512 import VGGNet
 from utils.mi_gpu import get_K_function
 from utils.mi_gpu import kde_in_gpu
@@ -301,16 +302,62 @@ def draw_mi_each_layer(y_a, y_b, layers_output_list_a, layers_output_list_b, pat
         save_and_draw(res_mi_a, res_mi_b, layer_index)
 
 
-def cluster_neurons(y_a, y_b, layers_output_list_a, layers_output_list_b, cluster_threshold_dict,
+def extract_unrelevance_neurons(layer_output_all, n_neurons, labelix_a, labelix_b, labelix_c, labelprobs_a,
+                                labelprobs_b, labelprobs_c, entropy_func_upper, alpha_threshold):
+    def get_irrelevance_neurons(label_name, labelix, labelprobs):
+        neurons_list_selected = list()
+        count = 1
+
+        # F保留和task有关系的神经元
+        F = np.arange(n_neurons).tolist()
+        while True:
+            min_index_neuron, mi_min = argmin_marginal_mi(layer_output_all, F, neurons_list_selected, labelix,
+                                                          labelprobs, entropy_func_upper)
+
+            log_t('MI with label Y_%s, No.%d: Min_index_neuron=%d,  mi_min=%f' % (
+                label_name, count, min_index_neuron, mi_min))
+            count += 1
+
+            if mi_min > alpha_threshold or min_index_neuron == -1:
+                break
+
+            F.remove(min_index_neuron)
+            # 记下的是所有的与1无关的神经元
+            neurons_list_selected.append(min_index_neuron)
+        return neurons_list_selected
+
+    neurons_irrelevance_a = set(get_irrelevance_neurons('A', labelix_a, labelprobs_a))
+    neurons_irrelevance_b = set(get_irrelevance_neurons('B', labelix_b, labelprobs_b))
+    neurons_irrelevance_c = set(get_irrelevance_neurons('C', labelix_c, labelprobs_c))
+
+    neurons_union = neurons_irrelevance_a & neurons_irrelevance_b & neurons_irrelevance_c
+
+    neurons_irrelevance_a_clean = neurons_irrelevance_a - neurons_union
+    neurons_irrelevance_b_clean = neurons_irrelevance_b - neurons_union
+    neurons_irrelevance_c_clean = neurons_irrelevance_c - neurons_union
+
+    # 返回的是与bc同时无关的，与ac同时无关的，与ab同时无关的神经元,并且三者之间没有交集
+    return np.sort(
+        list(set(np.arange(n_neurons)) - neurons_irrelevance_a - neurons_irrelevance_b - neurons_irrelevance_c)), \
+           np.sort(list(neurons_irrelevance_b_clean & neurons_irrelevance_c_clean)), \
+           np.sort(list(neurons_irrelevance_a_clean & neurons_irrelevance_c_clean)), \
+           np.sort(list(neurons_irrelevance_a_clean & neurons_irrelevance_b_clean))
+
+
+def cluster_neurons(y_a, y_b, y_c, layers_output_list_a, layers_output_list_b, layers_output_list_c,
+                    cluster_threshold_dict,
                     cluster_layer_range=np.arange(15), path_save=None):
     global dim_list
 
+    # dimension of labels
     n_label_a = y_a.shape[1]
     n_label_b = y_b.shape[1]
+    n_label_c = y_b.shape[1]
 
     entropy_func_upper = get_K_function()
     labelixs_a, labelprobs_a = get_label_info(y_a)
     labelixs_b, labelprobs_b = get_label_info(y_b)
+    labelixs_c, labelprobs_c = get_label_info(y_c)
 
     cluster_res_list = list()
 
@@ -320,17 +367,19 @@ def cluster_neurons(y_a, y_b, layers_output_list_a, layers_output_list_b, cluste
 
     # Init for all layers to store cluster res
     for layer_index in range(15):
-        n_neuron_total = dim_list[layer_index] * 2
+        n_neuron_total = dim_list[layer_index] * 3
 
         cluster_layer_dict = dict()
-        cluster_layer_dict['A'], cluster_layer_dict['B'] = list(), list()
-        cluster_layer_dict['AB'] = np.arange(n_neuron_total).tolist()
+        cluster_layer_dict['A'], cluster_layer_dict['B'], cluster_layer_dict['C'] = list(), list(), list()
+        cluster_layer_dict['ABC'] = np.arange(n_neuron_total).tolist()
         cluster_res_list += [cluster_layer_dict]
+
     # Output layer
     cluster_layer_dict = dict()
     cluster_layer_dict['A'] = [x for x in range(n_label_a)]
     cluster_layer_dict['B'] = [x + n_label_a for x in range(n_label_b)]
-    cluster_layer_dict['AB'] = list()
+    cluster_layer_dict['C'] = [x + n_label_a + n_label_b for x in range(n_label_c)]
+    cluster_layer_dict['ABC'] = list()
     cluster_res_list += [cluster_layer_dict]
 
     # The main loop
@@ -345,64 +394,25 @@ def cluster_neurons(y_a, y_b, layers_output_list_a, layers_output_list_b, cluste
         # Obtain output of this layer
         layer_output_a = layers_output_list_a[layer_index]
         layer_output_b = layers_output_list_b[layer_index]
+        layer_output_c = layers_output_list_c[layer_index]
 
         # 展开
         if len(layer_output_a.shape) == 4 and len(layer_output_b.shape) == 4:
             # [batch_size,h,w,channel_size] --> [batch_size,channel_size] for conv
-            layer_output_a, layer_output_b = list(
-                map(lambda x: np.max(x, axis=(1, 2)), [layer_output_a, layer_output_b]))
+            layer_output_a, layer_output_b, layer_output_c = list(
+                map(lambda x: np.max(x, axis=(1, 2)), [layer_output_a, layer_output_b, layer_output_c]))
 
-        layer_output_all = np.concatenate((layer_output_a, layer_output_b), axis=-1)
+        layer_output_all = np.concatenate((layer_output_a, layer_output_b, layer_output_c), axis=-1)
 
-        # 所有待选择的neurons
-        F_A = copy.deepcopy(cluster_res_list[layer_index]['AB'])
-        F_B = copy.deepcopy(cluster_res_list[layer_index]['AB'])
-
-        # Label b
-        count_a = 1
-        while True:
-            # Traverse neurons in F_A to find neuron with the minimal mi with Y_B
-            min_index_neuron, mi_min = argmin_marginal_mi(layer_output_all, F_A, cluster_res_list[layer_index]['A'],
-                                                          labelixs_b, labelprobs_b, entropy_func_upper)
-
-            log_t('MI with Y_B, No.%d: Min_index_neuron=%d,  mi_min=%f' % (count_a, min_index_neuron, mi_min))
-            count_a += 1
-
-            # 所有的节点已经都拿出来了
-            if mi_min > alpha_threshold or min_index_neuron == -1:
-                break
-
-            F_A.remove(min_index_neuron)
-            cluster_res_list[layer_index]['A'].append(min_index_neuron)
-
-        # Label a
-        count_b = 1
-        while True:
-            min_index_neuron, mi_min = argmin_marginal_mi(layer_output_all, F_B, cluster_res_list[layer_index]['B'],
-                                                          labelixs_a, labelprobs_a, entropy_func_upper)
-
-            log_t('MI with Y_A, No.%d: Min_index_neuron=%d,  mi_min=%f' % (count_b, min_index_neuron, mi_min))
-            count_b += 1
-
-            # 所有的节点已经都拿出来了
-            if mi_min > alpha_threshold or min_index_neuron == -1:
-                break
-
-            F_B.remove(min_index_neuron)
-            cluster_res_list[layer_index]['B'].append(min_index_neuron)
-
-        cluster_res_list[layer_index]['A'].sort()
-        cluster_res_list[layer_index]['B'].sort()
-
-        # Make sure there is not overlap between a, b and ab
-        # T_AB=T_AB-(T_A or T_B)
-        cluster_res_list[layer_index]['AB'] = list(
-            set(cluster_res_list[layer_index]['AB']) - set(cluster_res_list[layer_index]['A']) - set(
-                cluster_res_list[layer_index]['B']))
-
-        union = set(cluster_res_list[layer_index]['A']) & set(cluster_res_list[layer_index]['B'])
-        cluster_res_list[layer_index]['A'] = list(set(cluster_res_list[layer_index]['A']) - union)
-        cluster_res_list[layer_index]['B'] = list(set(cluster_res_list[layer_index]['B']) - union)
+        # Find neurons without relevance with B and C
+        cluster_res_list[layer_index]['ABC'], cluster_res_list[layer_index]['A'], cluster_res_list[layer_index]['B'], \
+        cluster_res_list[layer_index]['C'] = \
+            extract_unrelevance_neurons(layer_output_all,
+                                        dim_list[layer_index] * 3,
+                                        labelixs_a, labelixs_b, labelixs_c,
+                                        labelprobs_a, labelprobs_b, labelprobs_c,
+                                        entropy_func_upper,
+                                        alpha_threshold)
 
         # 保存layer_index层之前的所有结果，防止丢失
         path = path_save + '/cluster_results/cluster_layer-%d_threshold-%s' % (layer_index, str(alpha_threshold))
@@ -418,27 +428,35 @@ def model_summary(cluster_res_list):
     global dim_list
     for layer_index, layer_clusters in enumerate(cluster_res_list):
         num_A = len(layer_clusters['A'])
-        num_AB = len(layer_clusters['AB'])
-        num_AB_from_a = (np.array(layer_clusters['AB']) < dim_list[layer_index]).sum()
-        num_AB_from_b = num_AB - num_AB_from_a
         num_B = len(layer_clusters['B'])
-        num_pruned = dim_list[layer_index] * 2 - num_A - num_B - num_AB
+        num_C = len(layer_clusters['C'])
 
-        log('Layer %d: num_A=%d   |   num_AB=%d(%d:%d)   |   num_B=%d |   num_pruned=%d' % (
-            layer_index + 1, num_A, num_AB, num_AB_from_a, num_AB_from_b, num_B, num_pruned))
+        num_ABC = len(layer_clusters['ABC'])
+        num_ABC_from_a = (np.array(layer_clusters['ABC']) < dim_list[layer_index]).sum()
+        num_ABC_from_b = (np.array(layer_clusters['ABC']) < dim_list[layer_index] * 2).sum() - num_ABC_from_a
+        num_ABC_from_c = num_ABC - num_ABC_from_a - num_ABC_from_b
+
+        num_pruned = dim_list[layer_index] * 2 - num_A - num_B - num_C - num_ABC
+
+        log('Layer %d: num_A=%d\t|\tnum_B=%d\t|\tnum_C=%d\t|\tnum_ABC=%d(%d:%d:%d)\t|\tnum_pruned=%d' % (
+            layer_index + 1, num_A, num_B, num_C, num_ABC, num_ABC_from_a, num_ABC_from_b, num_ABC_from_c, num_pruned))
 
 
 def get_cluster_res(cfg):
     path_cluster_res = cfg['cluster']['path_cluster_res']
     if path_cluster_res == 'None':
+        print('[%s] Get the outputs of layers in model a, b and c' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         layers_output_list_a, labels_a = get_layers_output(model_path=cfg['basic']['model_a'])
         layers_output_list_b, labels_b = get_layers_output(model_path=cfg['basic']['model_b'])
+        layers_output_list_c, labels_c = get_layers_output(model_path=cfg['basic']['model_c'])
 
-        cluster_res_list = cluster_neurons(labels_a, labels_b, layers_output_list_a, layers_output_list_b,
+        cluster_res_list = cluster_neurons(labels_a, labels_b, labels_c,
+                                           layers_output_list_a, layers_output_list_b, layers_output_list_c,
                                            json.loads(cfg['cluster']['cluster_threshold_dict']),
                                            json.loads(cfg['cluster']['cluster_layer_range']), cfg['path']['path_save'])
     else:
         cluster_res_list = pickle.load(open(path_cluster_res, 'rb'))
+
     model_summary(cluster_res_list)
 
     return cluster_res_list
@@ -491,13 +509,14 @@ def retrain_model(cfg, cluster_res_list, plan_retrain):
     log_t('Loading weights of model a and b ...')
     weight_a = pickle.load(open(cfg['basic']['model_a'], 'rb'))
     weight_b = pickle.load(open(cfg['basic']['model_b'], 'rb'))
+    weight_c = pickle.load(open(cfg['basic']['model_c'], 'rb'))
     log_t('Done')
 
     signal_list = get_connection_signal(cluster_res_list)
 
     sess = init_tf()
 
-    model = VGG_Combined(cfg, weight_a, weight_b, cluster_res_list, signal_list)
+    model = VGG_Combined(cfg, weight_a, weight_b, weight_c, cluster_res_list, signal_list)
     model.build()
     sess.run(tf.global_variables_initializer())
 
@@ -511,15 +530,15 @@ def retrain_model(cfg, cluster_res_list, plan_retrain):
 
         for set_ in plan['train']:
             if plan['type'] == 'normal':
-                model.train(sess=sess, n_epochs=set_['n_epochs'], task_name='AB', lr=set_['lr'])
+                model.train(sess=sess, n_epochs=set_['n_epochs'], task_name='ABC', lr=set_['lr'])
             elif plan['type'] == 'individual':
                 model.train_individual(sess=sess, n_epochs=set_['n_epochs'], lr=set_['lr'])
         model.save_cfg()
 
 
-def obtain_cfg(task_name, model_path_a, model_path_b, pruning_set=None, cluster_set=None):
+def obtain_cfg(task_name, model_path_a, model_path_b, model_path_c, pruning_set=None, cluster_set=None):
     # cfg
-    time_stamp = str(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    time_stamp = str(datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
     cfg = get_cfg(task_name, time_stamp, suffix='rdnet')
 
     # Create exp dir
@@ -529,6 +548,7 @@ def obtain_cfg(task_name, model_path_a, model_path_b, pruning_set=None, cluster_
 
     cfg.set('basic', 'model_a', model_path_a)
     cfg.set('basic', 'model_b', model_path_b)
+    cfg.set('basic', 'model_c', model_path_c)
 
     if pruning_set is not None:
         cfg['basic']['pruning_method'] = 'info_bottle'
@@ -544,13 +564,13 @@ def obtain_cfg(task_name, model_path_a, model_path_b, pruning_set=None, cluster_
     return cfg
 
 
-def pruning(task_name, model_path_a, model_path_b, pruning_set, cluster_set, plan_retrain):
-    cfg = obtain_cfg(task_name, model_path_a, model_path_b, pruning_set, cluster_set)
+def pruning(task_name, model_path_a, model_path_b, model_path_c, pruning_set, cluster_set, plan_retrain):
+    cfg = obtain_cfg(task_name, model_path_a, model_path_b, model_path_c, pruning_set, cluster_set)
     cfg['path']['path_load'] = str(None)
 
     global dim_list
     dim_list = [64, 64, 128, 128, 256, 256, 256, 512, 512, 512, 512, 512, 512, n_fc, n_fc,
-                cfg['data'].getint('n_classes') / 2]
+                cfg['data'].getint('n_classes')]
 
     # Cluster
     cluster_res_list = get_cluster_res(cfg)
@@ -571,7 +591,7 @@ def pruning(task_name, model_path_a, model_path_b, pruning_set, cluster_set, pla
     #     'rb'))
 
     # Retrain
-    # retrain_model(cfg, cluster_res_list, plan_retrain)
+    retrain_model(cfg, cluster_res_list, plan_retrain)
 
 
 def draw_mi(task_name, model_path_a, model_path_b):
@@ -621,89 +641,37 @@ if __name__ == '__main__':
 
     task_lists = [
         {
-            'name': 'lfw_0a',
+            'name': 'lfw_27_32_42',
             'a': lfw_27,
-            'b': lfw_32
-        },
-        {
-            'name': 'lfw_0b',
-            'a': lfw_11,
-            'b': lfw_16
-        },
-        {
-            'name': 'lfw_0c',
-            'a': lfw_20,
-            'b': lfw_46
-        },
-        {
-            'name': 'lfw_1a',
-            'a': lfw_18,
-            'b': lfw_42
-        },
-        {
-            'name': 'lfw_1b',
-            'a': lfw_17,
-            'b': lfw_42
-        },
-        {
-            'name': 'lfw_1c',
-            'a': lfw_8,
-            'b': lfw_58
-        },
-        {
-            'name': 'lfw_2a',
-            'a': lfw_66,
-            'b': lfw_70
-        },
-        {
-            'name': 'lfw_2b',
-            'a': lfw_0,
-            'b': lfw_66
-        },
-        {
-            'name': 'lfw_2c',
-            'a': lfw_18,
-            'b': lfw_68
-        },
-
-        {
-            'name': 'lfw_5a',
-            'a': lfw_17,
-            'b': lfw_18
+            'b': lfw_32,
+            'c': lfw_42
         }
     ]
-    # 1,2,4,5,7,8
-    # for set_ in [task_lists[k] for k in [1, 2, 4, 5, 7, 8]]:
-    #     task_name = set_['name']
-    #     model_path_a = set_['a']
-    #     model_path_b = set_['b']
-    #     print(str(set_))
-    #     pruning(
-    #         # task_name='celeba',
-    #         # model_path_a='/local/home/david/Remote/PruneFramework/exp_files/celeba1-2019-07-13 10:39:27/tr00-epo010-acc0.9069',
-    #         # model_path_b='/local/home/david/Remote/PruneFramework/exp_files/celeba2-2019-07-15 10:07:34/tr00-epo010-acc0.8892',
-    #
-    #         task_name=task_name,
-    #         model_path_a=model_path_a,
-    #         model_path_b=model_path_b,
-    #
-    #         cluster_set={
-    #             'path_cluster_res': None,
-    #             'cluster_threshold_dict': {"conv": 0.09, "fc": 3},
-    #             # 'cluster_threshold_dict': {"conv": 0.5, "fc": 16},
-    #             'cluster_layer_range': [14]
-    #         },
-    #         pruning_set={
-    #             'name': 'info_bottle',
-    #             'gamma_conv': 1.,
-    #             'gamma_fc': 20.,
-    #             'ib_threshold_conv': 0.01,
-    #             'ib_threshold_fc': 0.01
-    #         },
-    #         plan_retrain=plan_retrain
-    #     )
 
-    draw_mi(task_name='celeba',
-            model_path_a='/local/home/david/Remote/PruneFramework/exp_files/celeba1-2019-07-13 10:39:27/tr00-epo010-acc0.9069',
-            model_path_b='/local/home/david/Remote/PruneFramework/exp_files/celeba2-2019-07-15 10:07:34/tr00-epo010-acc0.8892'
-            )
+    for set_ in task_lists:
+        task_name = set_['name']
+        model_path_a = set_['a']
+        model_path_b = set_['b']
+        model_path_c = set_['c']
+        print(str(set_))
+
+        pruning(
+            task_name=task_name,
+            model_path_a=model_path_a,
+            model_path_b=model_path_b,
+            model_path_c=model_path_c,
+
+            cluster_set={
+                'path_cluster_res': None,
+                'cluster_threshold_dict': {"conv": 0.0001, "fc": 0.02},
+                'cluster_layer_range': [13, 14]
+            },
+            pruning_set={
+                'name': 'info_bottle',
+                'gamma_conv': 1.,
+                'gamma_fc': 20.,
+                'ib_threshold_conv': 0.01,
+                'ib_threshold_fc': 0.01
+            },
+            plan_retrain=plan_retrain
+        )

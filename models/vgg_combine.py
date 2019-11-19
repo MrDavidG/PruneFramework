@@ -63,17 +63,17 @@ class VGG_Combined(BaseModel):
         if self.cfg['path']['path_load'] and os.path.exists(self.cfg['path']['path_load']):
             # Directly load all weights
             self.weight_dict = pickle.load(open(self.cfg['path']['path_load'], 'rb'))
-            log_l('Loading weights in %s' % self.cfg['path']['path_load'])
+            log_t('Loading weights in %s' % self.cfg['path']['path_load'])
             self.initial_weight = False
         else:
             # Use pre-train weights in conv, but init weights in fc
             self.weight_dict = self.construct_initial_weights(weight_a, weight_b, cluster_res_list)
-            log_l('Initialize weight matrix from weight a and b')
+            log_t('Initialize weight matrix from weight a and b')
             self.initial_weight = True
 
         if self.cfg['basic'][
             'pruning_method'] == 'info_bottle' and 'conv1_1/AB/info_bottle/mu' not in self.weight_dict.keys():
-            log_l('Initialize ib params')
+            log_t('Initialize ib params')
             self.weight_dict = dict(self.weight_dict, **self.construct_initial_weights_ib(cluster_res_list))
 
         self.build()
@@ -266,9 +266,9 @@ class VGG_Combined(BaseModel):
 
         def get_ib(y, layer_type, kl_mult, partition_name):
             if layer_type == 'C_ib':
-                mask_threshold = self.cfg['pruning'].getfloat('prune_threshold_conv')
+                mask_threshold = self.cfg['pruning'].getfloat('ib_threshold_conv')
             elif layer_type == 'F_ib':
-                mask_threshold = self.cfg['pruning'].getfloat('prune_threshold_fc')
+                mask_threshold = self.cfg['pruning'].getfloat('ib_threshold_fc')
             if self.cfg['basic']['pruning_method'] == 'info_bottle':
                 ib_layer = InformationBottleneckLayer(y, layer_type=layer_type, weight_dict=self.weight_dict,
                                                       is_training=self.is_training, kl_mult=kl_mult,
@@ -564,12 +564,18 @@ class VGG_Combined(BaseModel):
             self.op_accuracy_b = tf.reduce_sum(tf.cast(correct_preds_b, tf.float32)) / tf.cast(tf.shape(self.Y)[1] / 2,
                                                                                                tf.float32)
 
+    def set_kl_factor(self, kl_factor):
+        log_l('kl_factor: %f' % kl_factor)
+        self.kl_factor = kl_factor
+        self.loss()
+        # self.optimize 在train函数中调用
+
     def build(self):
         self.inference()
         self.loss()
         self.evaluate()
 
-    def train_one_epoch(self, sess, init, epoch, step, task_name):
+    def train_one_epoch(self, sess, init, epoch, task_name):
         sess.run(init)
         total_loss = 0
         total_kl = 0
@@ -588,15 +594,14 @@ class VGG_Combined(BaseModel):
             while True:
                 if self.cfg['basic']['pruning_method'] == 'info_bottle':
                     _, loss, kl = sess.run([op_opt, self.op_loss, self.kl_total], feed_dict={self.is_training: True})
-                    total_kl += kl
+                    total_kl += kl * self.kl_factor
                 else:
                     _, loss = sess.run([op_opt, self.op_loss], feed_dict={self.is_training: True})
-                step += 1
                 total_loss += loss
                 n_batches += 1
 
                 if n_batches % 5 == 0:
-                    str_ = 'epoch={:d}, batch={:d}/{:d}, curr_loss={:f}, train_kl={:f}, used_time:{:.2f}s'.format(
+                    str_ = 'epoch={:d}, batch={:d}/{:d}, curr_loss={:.4f}, train_kl={:.4f}, used_time:{:.2f}s'.format(
                         epoch + 1,
                         n_batches,
                         self.total_batches_train,
@@ -611,7 +616,6 @@ class VGG_Combined(BaseModel):
             pass
 
         log(str_, need_print=False)
-        return step
 
     def fetch_weight(self, sess):
         """
@@ -658,14 +662,12 @@ class VGG_Combined(BaseModel):
         str_ = 'Epoch:{:d}, val_acc={:%} | a={:%} | b={:%}, val_loss={:f}, used_time:{:.2f}s'.format(
             epoch + 1, accu, accu_a, accu_b, total_loss / n_batches, time_end - time_start)
 
-        print('\n' + str_)
-
         # 写文件
-        log(str_)
+        log('\n' + str_)
 
         return accu, accu_a, accu_b
 
-    def train_one_epoch_individual(self, sess, init, epoch, step):
+    def train_one_epoch_individual(self, sess, init, epoch):
         sess.run(init)
         total_loss_a = 0
         total_loss_b = 0
@@ -688,7 +690,6 @@ class VGG_Combined(BaseModel):
                 else:
                     _, loss_a = sess.run([self.op_opt_a, self.op_loss_a], feed_dict={self.is_training: True})
                     _, loss_b = sess.run([self.op_opt_b, self.op_loss_b], feed_dict={self.is_training: True})
-                step += 2
                 total_loss_a += loss_a
                 total_loss_b += loss_b
                 n_batches += 2
@@ -712,21 +713,20 @@ class VGG_Combined(BaseModel):
 
         # 写文件
         log(str_, need_print=False)
-        return step
+
 
     def train_individual(self, sess, n_epochs, lr):
         self.optimize(lr)
 
         sess.run(tf.variables_initializer(self.opt.variables()))
-        step = self.global_step_tensor.eval(session=sess)
         for epoch in range(n_epochs):
-            step = self.train_one_epoch_individual(sess, self.train_init, epoch, step)
+            self.train_one_epoch_individual(sess, self.train_init, epoch)
             acc, acc_a, acc_b = self.eval_once(sess, self.test_init, epoch)
 
             if self.cfg['basic']['pruning_method'] == 'info_bottle':
                 cr = self.get_CR(sess, self.cluster_res_list)
 
-            if (epoch + 1) % self.cfg['train']['save_step'] == 0:
+            if (epoch + 1) % self.cfg['train'].getint('save_step') == 0:
                 if self.cfg['basic']['pruning_method'] != 'info_bottle':
                     name = '%s/tr%.2d-epo%.3d-acc%.4f-%.4f-%.4f' % (
                         self.cfg['path']['path_save'], self.cnt_train, epoch + 1, acc, acc_a, acc_b)
@@ -753,15 +753,15 @@ class VGG_Combined(BaseModel):
         self.optimize(lr)
 
         sess.run(tf.variables_initializer(self.opt.variables()))
-        step = self.global_step_tensor.eval(session=sess)
+
         for epoch in range(n_epochs):
-            step = self.train_one_epoch(sess, self.train_init, epoch, step, task_name)
+            self.train_one_epoch(sess, self.train_init, epoch, task_name)
             acc, acc_a, acc_b = self.eval_once(sess, self.test_init, epoch)
 
             if self.cfg['basic']['pruning_method'] == 'info_bottle':
                 cr = self.get_CR(sess, self.cluster_res_list)
 
-            if (epoch + 1) % self.cfg['train']['save_step'] == 0:
+            if (epoch + 1) % self.cfg['train'].getint('save_step') == 0:
                 if self.cfg['basic']['pruning_method'] != 'info_bottle':
                     name = '%s/tr%.2d-epo%.3d-acc%.4f-%.4f-%.4f' % (
                         self.cfg['path']['path_save'], self.cnt_train, epoch + 1, acc, acc_a, acc_b)
@@ -930,24 +930,26 @@ class VGG_Combined(BaseModel):
                     total_flops += (2 * num_in - 1) * num_out
                     remain_flops += (2 * (num_in - num_in_prune) - 1) * (num_out - num_out_prune)
 
+        n_classes = self.cfg['data'].getint('n_classes') / 2
+
         # output layer
-        total_params += num_in_channel_dict['fc8/A'] * 20
-        remain_params += (num_in_channel_dict['fc8/A'] - in_prune_dict['fc8/A']) * 20
-        total_params += num_in_channel_dict['fc8/B'] * 20
-        remain_params += (num_in_channel_dict['fc8/B'] - in_prune_dict['fc8/B']) * 20
+        total_params += num_in_channel_dict['fc8/A'] * n_classes
+        remain_params += (num_in_channel_dict['fc8/A'] - in_prune_dict['fc8/A']) * n_classes
+        total_params += num_in_channel_dict['fc8/B'] * n_classes
+        remain_params += (num_in_channel_dict['fc8/B'] - in_prune_dict['fc8/B']) * n_classes
 
         # FLOPs
-        total_flops += (2 * num_in_channel_dict['fc8/A'] - 1) * 20
-        remain_flops += (2 * (num_in_channel_dict['fc8/A'] - in_prune_dict['fc8/A']) - 1) * 20
-        total_flops += (2 * num_in_channel_dict['fc8/B'] - 1) * 20
-        remain_flops += (2 * (num_in_channel_dict['fc8/B'] - in_prune_dict['fc8/B']) - 1) * 20
+        total_flops += (2 * num_in_channel_dict['fc8/A'] - 1) * n_classes
+        remain_flops += (2 * (num_in_channel_dict['fc8/A'] - in_prune_dict['fc8/A']) - 1) * n_classes
+        total_flops += (2 * num_in_channel_dict['fc8/B'] - 1) * n_classes
+        remain_flops += (2 * (num_in_channel_dict['fc8/B'] - in_prune_dict['fc8/B']) - 1) * n_classes
 
         pruned_params = total_params - remain_params
         pruned_flops = total_flops - remain_flops
 
         cr = np.around(float(total_params - pruned_params) / total_params, decimals=5)
 
-        str_1 = 'Total parameters: {}, Pruned parameters: {}, Remaining params:{}, Remain/Total params:{}'.format(
+        str_1 = 'Total params: {}, Pruned params: {}, Remaining params:{}, Remain/Total params:{}'.format(
             total_params, pruned_params, remain_params, cr)
 
         res_each_layer = list()
