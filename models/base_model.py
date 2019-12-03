@@ -14,6 +14,8 @@ The base dnn model template.
 import tensorflow as tf
 from abc import abstractmethod
 from data_loader.image_data_generator import ImageDataGenerator
+from utils.json import read_f
+from utils.json import read_l
 
 import pickle
 
@@ -21,6 +23,9 @@ import pickle
 class BaseModel:
     def __init__(self, config):
         self.op_loss = None
+        self.op_loss_func = None
+        self.op_loss_regu = None
+        self.op_loss_kl = None
         self.op_accuracy = None
         self.op_logits = None
         self.op_opt = None
@@ -34,16 +39,25 @@ class BaseModel:
         self.total_batches_train = None
         self.n_samples_train = None
         self.n_samples_val = None
-        self.share_scope = None
         self.learning_rate = None
 
         self.cnt_train = 0
         self.layers = list()
-        self.task_name = config['basic']['task_name']
+        self.task_name = config['task']['name']
 
+        # Model
+        self.structure = read_l(config, 'model', 'structure')
+        self.dimension = read_l(config, 'model', 'dimension')
+        self.activation = read_l(config, 'model', 'activation')
+
+        # VIBNet
+        self.kl_total = 0
+        self.pruning = False
         if config['basic']['pruning_method'] == 'info_bottle':
-            self.kl_total = 0
+            self.pruning = True
+            self.kl_mult = read_l(config, 'pruning', 'kl_mult')
             self.kl_factor = 0
+            self.threshold = read_f(config, 'pruning', 'pruning_threshold')
 
         self.is_training = tf.placeholder(dtype=tf.bool)
         self.set_global_tensor(config['train'].getfloat('regularizer_conv'), config['train'].getfloat('regularizer_fc'))
@@ -77,11 +91,11 @@ class BaseModel:
                 return layer
         return None
 
-    def is_layer_shared(self, layer_name):
-        share_key = layer_name + '/is_share'
-        if share_key in self.weight_dict:
-            return self.weight_dict[share_key]
-        return False
+    # def is_layer_shared(self, layer_name):
+    #     share_key = layer_name + '/is_share'
+    #     if share_key in self.weight_dict:
+    #         return self.weight_dict[share_key]
+    #     return False
 
     def set_global_tensor(self, regu_conv, regu_fc):
         self.regularizer_conv = tf.contrib.layers.l2_regularizer(scale=regu_conv)
@@ -90,6 +104,9 @@ class BaseModel:
     def save_cfg(self):
         with open(self.cfg['path']['path_cfg'], 'w') as file:
             self.cfg.write(file)
+
+    def save_now(self, epoch, n_epoch, save_step):
+        return save_step == -1 and epoch == n_epoch or save_step != -1 and epoch % save_step == 0
 
     @abstractmethod
     def init_saver(self):

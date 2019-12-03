@@ -15,7 +15,7 @@ import tensorflow as tf
 
 
 class ConvLayer(BaseLayer):
-    def __init__(self, x, weight_dict=None, is_dropout=False, is_training=False, is_musked=False, regularizer_conv=None,
+    def __init__(self, x, weight_dict=None, is_training=False, regularizer_conv=None, is_dropout=False, is_musked=False,
                  stride=1, is_merge_bn=True):
         super(ConvLayer, self).__init__()
 
@@ -84,19 +84,18 @@ class ConvLayer(BaseLayer):
         self.weight_tensors = [filt, biases]
         self.layer_output = conv
 
-    def get_conv_filter_bn(self, weight_dict, regularizer_conv):
-        filt = tf.get_variable(name="weights", initializer=weight_dict[self.layer_name + '/weights'],
-                               regularizer=regularizer_conv)
-        beta = tf.constant_initializer(weight_dict[self.layer_name + '/batch_normalization/beta'])
-        mean = tf.constant_initializer(weight_dict[self.layer_name + '/batch_normalization/moving_mean'])
-        variance = tf.constant_initializer(weight_dict[self.layer_name + '/batch_normalization/moving_variance'])
-
-        return filt, beta, mean, variance
+    # def get_conv_filter_bn(self, weight_dict, regularizer_conv):
+    #     filt = tf.get_variable(name="weights", initializer=weight_dict[self.layer_name + '/weights'],
+    #                            regularizer=regularizer_conv)
+    #     beta = tf.constant_initializer(weight_dict[self.layer_name + '/batch_normalization/beta'])
+    #     mean = tf.constant_initializer(weight_dict[self.layer_name + '/batch_normalization/moving_mean'])
+    #     variance = tf.constant_initializer(weight_dict[self.layer_name + '/batch_normalization/moving_variance'])
+    #
+    #     return filt, beta, mean, variance
 
     def get_conv_filter_bn_merge(self, weight_dict, regularizer_conv, trainable):
-        filt = tf.get_variable(name="weights", initializer=weight_dict[self.layer_name + '/weights'],
+        filt = tf.get_variable(name="w", initializer=weight_dict[self.layer_name + '/w'],
                                regularizer=regularizer_conv, trainable=trainable)
-        biases = tf.get_variable(name="biases", initializer=weight_dict[self.layer_name + '/biases'],
+        biases = tf.get_variable(name="b", initializer=weight_dict[self.layer_name + '/b'],
                                  regularizer=regularizer_conv, trainable=trainable)
-
         return filt, biases

@@ -12,44 +12,111 @@ Description here.
 """
 
 from utils.logger import logger
+from utils.logger import log_t
+from utils.json import read_l
+
 import configparser
+import os
 
 
-def get_cfg(dataset_name, time_stamp, file_cfg_model=None, file_cfg_global='global.cfg', suffix=''):
-    cfg_global = load_cfg('../config/' + file_cfg_global)
+def get_cfg_rdnet(task_name, model_name, data_name, time_stamp, path_model=None, file_cfg_global='global.cfg'):
+    cfg_base, cfg_task, cfg_data, cfg_model = load_cfg('../config/' + file_cfg_global), \
+                                              load_cfg('../config/task.cfg'), \
+                                              load_cfg('../config/data.cfg'), \
+                                              load_cfg('../config/model.cfg')
 
-    # Get model cfg
-    if file_cfg_model is not None:
-        cfg_model = load_cfg('../config/' + file_cfg_model)
+    # 以global为主体
+    cfg_base['basic']['time_stamp'] = time_stamp
 
-        for section in cfg_model.sections():
-            for option in cfg_model.options(section):
-                if section not in cfg_global.sections():
-                    cfg_global.add_section(section)
-                cfg_global.set(section, option, cfg_model[section][option])
+    def combine_cfg(cfg, key, value):
+        if value is not None:
+            cfg_base.add_section(key)
+            cfg_base.set(key, 'name', value)
+            for option in cfg.options(value):
+                cfg_base.set(key, option, cfg[value][option])
 
-    # Get data cfg
-    cfg_data = load_cfg('../config/data.cfg')
+    # task
+    combine_cfg(cfg_task, 'task', task_name)
+    # data
+    combine_cfg(cfg_data, 'data', data_name)
+    # model
+    combine_cfg(cfg_model, 'model', model_name)
 
-    cfg_global.add_section('data')
+    cfg_base['path']['path_load'] = str(path_model)
+    cfg_base['path']['path_save'] += '%s-%s-rdnet-%s' % (task_name, model_name, time_stamp)
+    cfg_base['path']['path_cfg'] = cfg_base['path']['path_save'] + '/cfg.ini'
+    cfg_base['path']['path_log'] = cfg_base['path']['path_save'] + '/log.log'
+    cfg_base['path']['path_dataset'] = cfg_base['path']['path_dataset'] + data_name + '/'
 
-    cfg_global.set('data', 'dataset_name', dataset_name)
-    for option in cfg_data.options(dataset_name):
-        cfg_global.set('data', option, cfg_data[dataset_name][option])
+    # activation要变化，同时还需要指出opt
+    activation_task = cfg_base['task']['activation']
+    activation_model = read_l(cfg_base, 'model', 'activation')
+    cfg_base.set('model', 'activation', str(activation_model + [activation_task]))
 
-    cfg_global['basic']['task_name'] = dataset_name
-    cfg_global['basic']['time_stamp'] = time_stamp
+    # 登录log
+    logger(cfg_base['path']['path_log'])
+
+    # create dir
+    if not os.path.exists(cfg_base['path']['path_save']):
+        os.mkdir(cfg_base['path']['path_save'])
+        log_t('Create directory %s' % cfg_base['path']['path_save'])
+
+    return cfg_base
+
+
+def get_cfg(task_name, model_name, data_name, time_stamp, path_model=None, file_cfg_global='global.cfg', suffix=None):
+    # global, task, data, model
+    cfg_base, cfg_task, cfg_data, cfg_model = load_cfg('../config/' + file_cfg_global), \
+                                              load_cfg('../config/task.cfg'), \
+                                              load_cfg('../config/data.cfg'), \
+                                              load_cfg('../config/model.cfg')
+
+    # 以global为主体
+    cfg_base['basic']['time_stamp'] = time_stamp
+
+    def combine_cfg(cfg, key, value):
+        if value is not None:
+            cfg_base.add_section(key)
+            cfg_base.set(key, 'name', value)
+            for option in cfg.options(value):
+                cfg_base.set(key, option, cfg[value][option])
+
+    # task
+    combine_cfg(cfg_task, 'task', task_name)
+    # data
+    combine_cfg(cfg_data, 'data', data_name)
+    # model
+    combine_cfg(cfg_model, 'model', model_name)
+
+    # path_cfg, path_log
+    cfg_base['path']['path_load'] = str(path_model)
     if suffix is None:
-        cfg_global['path']['path_save'] += '%s-%s' % (dataset_name, time_stamp)
+        cfg_base['path']['path_save'] += '%s-%s-%s' % (task_name, model_name, time_stamp)
     else:
-        cfg_global['path']['path_save'] += '%s-%s-%s' % (dataset_name, suffix, time_stamp)
-    cfg_global['path']['path_cfg'] = cfg_global['path']['path_save'] + '/cfg.ini'
-    cfg_global['path']['path_log'] = cfg_global['path']['path_save'] + '/log.log'
-    cfg_global['path']['path_dataset'] = cfg_global['path']['path_dataset'] + cfg_global['basic']['task_name'] + '/'
+        cfg_base['path']['path_save'] += '%s-%s-%s-%s' % (task_name, model_name, suffix, time_stamp)
+    cfg_base['path']['path_cfg'] = cfg_base['path']['path_save'] + '/cfg.ini'
+    cfg_base['path']['path_log'] = cfg_base['path']['path_save'] + '/log.log'
+    cfg_base['path']['path_dataset'] = cfg_base['path']['path_dataset'] + data_name + '/'
 
-    logger(cfg_global['path']['path_log'])
+    # activation, dimension三个部分都要变化，同时还需要指出opt
+    activation_task = cfg_base['task']['activation']
+    activation_model = read_l(cfg_base, 'model', 'activation')
+    cfg_base.set('model', 'activation', str(activation_model + [activation_task]))
 
-    return cfg_global
+    # TODO: 这里在rdnet里面是不对的，需要考虑一下怎么处理，最后可能放到外面来或者重新写一个get_cfg
+    n_labels_task = cfg_base['task'].getint('n_labels')
+    n_labels_model = read_l(cfg_base, 'model', 'dimension')
+    cfg_base.set('model', 'dimension', str(n_labels_model + [n_labels_task]))
+
+    # 登录log
+    logger(cfg_base['path']['path_log'])
+
+    # create dir
+    if not os.path.exists(cfg_base['path']['path_save']):
+        os.mkdir(cfg_base['path']['path_save'])
+        log_t('Create directory %s' % cfg_base['path']['path_save'])
+
+    return cfg_base
 
 
 def load_cfg(path_cfg):

@@ -36,7 +36,7 @@ class InformationBottleneckLayer(BaseLayer):
         self.weight_tensors = [mu, logD]
 
         # [batch_size, dim]
-        z_scale = self.reparameterize(mu, logD, batch_size)
+        z_scale = self.reparameterize(mu, logD, batch_size, is_training)
 
         # if not training, prune the weights under threshold
         z_scale *= tf.cond(is_training, lambda: 1., lambda: self.get_mask(mask_threshold))
@@ -47,7 +47,7 @@ class InformationBottleneckLayer(BaseLayer):
         # name      conv                                        fc
         # x         [batch_size, height, width, channel_size]   [batch_size, dim]
         # new_shape [batch_size, channel_size, 1, 1]            [batch_size, dim]
-        if self.layer_type == 'C_ib':
+        if self.layer_type == 'C_vib':
             new_shape = self.adapt_shape(tf.shape(z_scale), tf.shape(x))
             # convert x from [batch_size, h, w, channel_size]
             # to [batch_size, channel_size, h, w]
@@ -55,7 +55,7 @@ class InformationBottleneckLayer(BaseLayer):
             ib = x * tf.reshape(z_scale, shape=new_shape)
             # convert ib back to [batch_size, h, w, channel_size]
             ib = tf.transpose(ib, perm=(0, 2, 3, 1))
-        elif self.layer_type == 'F_ib':
+        elif self.layer_type == 'F_vib':
             ib = x * z_scale
 
         self.layer_output = (ib, kld)
@@ -85,7 +85,7 @@ class InformationBottleneckLayer(BaseLayer):
 
         return new_shape
 
-    def reparameterize(self, mu, logD, batch_size):
+    def reparameterize(self, mu, logD, batch_size, is_training):
         # std dev
         std = tf.exp(logD * 0.5)
 
@@ -94,17 +94,24 @@ class InformationBottleneckLayer(BaseLayer):
         dim = tf.shape(logD)[0]
 
         # the random epsilon
-        eps = tf.random.normal(shape=[batch_size, dim])
+        # when test, not eps
+        # eps = tf.random.normal(shape=[batch_size, dim])
 
         # [batch_size, dim]
-        return tf.reshape(mu, shape=[1, -1]) + eps * tf.reshape(std, shape=[1, -1])
-        # return tf.reshape(mu, shape=[1, -1])
+        return tf.cond(is_training,
+                       lambda: tf.reshape(mu, shape=[1, -1]) + tf.random.normal(shape=[batch_size, dim]) * tf.reshape(
+                           std, shape=[1, -1]),
+                       lambda: tf.reshape(mu, shape=[1, -1]) + tf.zeros(shape=[batch_size, dim]))
 
-    def get_mask(self, threshold=0):
+    def get_mask(self, threshold, dtype=tf.float32):
         # logalpha: [dim]
         logalpha = self.weight_tensors[1] - tf.log(tf.pow(self.weight_tensors[0], 2) + 1e-8)
-        mask = tf.cast(logalpha < threshold, dtype=tf.float32)
+        mask = tf.cast(logalpha < threshold, dtype=dtype)
         return mask
+
+    def get_remained(self, threshold):
+        mask = self.get_mask(threshold)
+        return tf.reduce_sum(tf.cast(tf.equal(mask, 1), dtype=tf.int32))
 
     def get_kld(self, x):
         """
@@ -123,12 +130,12 @@ class InformationBottleneckLayer(BaseLayer):
         h_D = tf.exp(tf.reshape(logD, shape=new_shape))
         h_mu = tf.reshape(mu, shape=new_shape)
 
-        if self.layer_type == 'C_ib':
+        if self.layer_type == 'C_vib':
             KLD = tf.reduce_sum(tf.log(1 + tf.pow(h_mu, 2) / (h_D + 1e-8))) * tf.cast(x_shape[3],
                                                                                       dtype=tf.float32) / tf.cast(
                 tf.shape(h_D)[1], dtype=tf.float32)
             KLD *= tf.cast(tf.reduce_prod(x_shape[1:3]), dtype=tf.float32)
-        elif self.layer_type == 'F_ib':
+        elif self.layer_type == 'F_vib':
             KLD = tf.reduce_sum(tf.log(1 + tf.pow(h_mu, 2) / (h_D + 1e-8))) * tf.cast(x_shape[1],
                                                                                       dtype=tf.float32) / tf.cast(
                 tf.shape(h_D)[1], dtype=tf.float32)
@@ -136,9 +143,9 @@ class InformationBottleneckLayer(BaseLayer):
         return KLD * 0.5 * self.kl_mult
 
     def get_ib_param(self, weight_dict):
-        mu = tf.get_variable(name='info_bottle/mu', initializer=weight_dict[self.layer_name + '/info_bottle/mu'],
+        mu = tf.get_variable(name='mu', initializer=weight_dict[self.layer_name + '/mu'],
                              trainable=True)
-        logD = tf.get_variable(name='info_bottle/logD', initializer=weight_dict[self.layer_name + '/info_bottle/logD'],
+        logD = tf.get_variable(name='logD', initializer=weight_dict[self.layer_name + '/logD'],
                                trainable=True)
 
         return mu, logD
