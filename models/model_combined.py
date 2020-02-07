@@ -72,16 +72,16 @@ class Model_Combined(BaseModel):
 
         if read_s(self.cfg, 'path', 'path_load') and os.path.exists(read_s(self.cfg, 'path', 'path_load')):
             # Directly load all weights
-            self.weight_dict = pickle.load(open(read_s(self.cfg, 'path', 'path_load'), 'rb'))
             log_t('Loading weights in %s' % read_s(self.cfg, 'path', 'path_load'))
+            self.weight_dict = pickle.load(open(read_s(self.cfg, 'path', 'path_load'), 'rb'))
             self.initial_weight = False
         else:
             # Use pre-train weights in conv, but init weights in fc
-            self.weight_dict = self.init_weights(weight_list)
             log_t('Initialize weight matrix from weight lists')
+            self.weight_dict = self.init_weights(weight_list)
             self.initial_weight = True
 
-        if self.pruning and self.structure[0] + '/AB/vib/mu' not in self.weight_dict.keys():
+        if self.pruning and self.structure[0] + '_vib/CEN/mu' not in self.weight_dict.keys():
             log_t('Initialize VIBNet params')
             self.weight_dict = dict(self.weight_dict, **self.init_weights_vib())
 
@@ -110,13 +110,18 @@ class Model_Combined(BaseModel):
         self.n_classes_list = list()
 
         index_s = 0
-        for item in read_s(self.cfg, 'task', 'labels_task')[1:-1].split(','):
+        # 先替换成$，然后在进行分割
+        str_labels = read_s(self.cfg, 'task', 'labels_task').strip().replace('],[', ']$[')
+        for item in str_labels[1:-1].split('$'):
             if item.count('-') == 0:
                 labels = json.loads(item)
             else:
                 s, e = [int(_) for _ in item[1:-1].split('-')]
                 labels = np.arange(s, e).tolist()
 
+            # self.Y_list里面保存的是所有label里面的相对顺序位置
+            # 所以要求labels里的顺序是labels_task里面去掉方括号的效果
+            # labels_task仅仅是用来区分每个task的，实际只提供每个task label的长度值
             self.Y_list.append(np.arange(index_s, index_s + len(labels)).tolist())
             self.n_classes_list.append(len(labels))
             index_s = index_s + len(labels)
@@ -184,8 +189,8 @@ class Model_Combined(BaseModel):
 
                     if layer_name.startswith('c'):
                         weight = np.zeros(
-                            shape=[3, 3, np.sum(in_list, dtype=np.int), np.sum(out_list, dtype=np.int)]).astype(
-                            np.float32)
+                            shape=[self.kernel_size[0], self.kernel_size[1], np.sum(in_list, dtype=np.int),
+                                   np.sum(out_list, dtype=np.int)]).astype(np.float32)
                     elif layer_name.startswith('f'):
                         weight = np.zeros(shape=[np.sum(in_list, dtype=np.int), np.sum(out_list, dtype=np.int)]).astype(
                             np.float32)
@@ -254,6 +259,12 @@ class Model_Combined(BaseModel):
                     name = 'conv'
                 elif layer_type == 'F_vib':
                     name = 'fc'
+
+                    # if layer_name == 'f7':
+                    #     if partition_name == 'CEN':
+                    #         kl_mult = kl_mult * 1.1
+                    #     else:
+                    #         kl_mult = kl_mult * 0.7
 
                 mask_threshold = read_f(self.cfg, 'pruning', 'ib_threshold_' + name)
                 gamma = read_f(self.cfg, 'pruning', 'gamma_' + name)
@@ -369,11 +380,17 @@ class Model_Combined(BaseModel):
             self.op_logits = tf.nn.tanh(tf.concat(output_list, axis=1))
 
     def loss(self):
-        # func loss
+        # normal func loss
         self.op_loss_func = tf.losses.mean_squared_error(labels=self.Y, predictions=self.op_logits)
         self.op_loss_func_list = [tf.losses.mean_squared_error(labels=tf.gather(self.Y, self.Y_list[ind], axis=-1),
                                                                predictions=self.op_logits_list[ind]) for ind in
                                   range(self.n_tasks)]
+
+        # 这里是为了scenario2做测试来用的
+        # self.op_loss_func_list = [tf.losses.mean_squared_error(labels=tf.gather(self.Y, self.Y_list[ind], axis=-1),
+        #                                                        predictions=self.op_logits_list[ind]) for ind in
+        #                           range(self.n_tasks)]
+        # self.op_loss_func = 0.05 * self.op_loss_func_list[0]+self.op_loss_func_list[1]
 
         # Notice: l2 loss没有分任务，建议不要使用
         self.op_loss_regu = tf.losses.get_regularization_loss()
@@ -525,7 +542,8 @@ class Model_Combined(BaseModel):
 
         if self.pruning:
             str_ = 'Epoch:{:d}, val_acc={:.3%}|{:}, val_loss={:.4f}, val_loss_func={:.4f}, val_loss_kl={:.4f}, used_time:{:.2f}s'.format(
-                epoch + 1, accu, str(['{:.3%}'.format(_) for _ in accu_list]), avg_loss, avg_loss_func, avg_loss_kl,
+                epoch + 1, accu, str(['{:.3%}'.format(_) for _ in accu_list]).replace('\'', ''), avg_loss,
+                avg_loss_func, avg_loss_kl,
                 time_end - time_start)
         else:
             str_ = 'Epoch:{:d}, val_acc={:.4%}|{:}, val_loss={:.4f}, used_time:{:.2f}s'.format(epoch + 1, accu,
@@ -539,108 +557,60 @@ class Model_Combined(BaseModel):
 
     def train_one_epoch_individual(self, sess, init, epoch):
         sess.run(init)
-        total_loss_a = 0
-        total_loss_b = 0
-        total_kl_a = 0
-        total_kl_b = 0
+
         n_batches = 0
 
         time_last = time.time()
-
         try:
             while True:
-                if self.pruning:
-                    _, loss_a, kl_a = sess.run([self.op_opt_a, self.op_loss_a, self.kl_total_a],
-                                               feed_dict={self.is_training: True})
-                    total_kl_a += kl_a
-                    _, loss_b, kl_b = sess.run([self.op_opt_b, self.op_loss_b, self.kl_total_b],
-                                               feed_dict={self.is_training: True})
-                    total_kl_b += kl_b
+                for task_index in range(self.n_tasks):
+                    _ = sess.run([self.op_opt_list[task_index]], {self.is_training: True})
 
-                else:
-                    _, loss_a = sess.run([self.op_opt_a, self.op_loss_a], feed_dict={self.is_training: True})
-                    _, loss_b = sess.run([self.op_opt_b, self.op_loss_b], feed_dict={self.is_training: True})
-                total_loss_a += loss_a
-                total_loss_b += loss_b
-                n_batches += 2
+                n_batches += self.n_tasks
+                str_ = 'epoch={:d}, batch={:d}/{:d}, used_time:{:.2f}s'.format(
+                    epoch + 1,
+                    n_batches,
+                    self.total_batches_train,
+                    time.time() - time_last)
 
-                if n_batches % 10 == 0:
-                    str_ = 'epoch={:d}, batch={:d}/{:d}, curr_loss_a={:f}, curr_loss_b={:f}, train_kl_a={:f}, train_kl_b={:f}, used_time:{:.2f}s'.format(
-                        epoch + 1,
-                        n_batches,
-                        self.total_batches_train,
-                        total_loss_a / n_batches * 2,
-                        total_loss_b / n_batches * 2,
-                        total_kl_a / n_batches * 2,
-                        total_kl_b / n_batches * 2,
-                        time.time() - time_last)
-                    print('\r' + str_, end=' ')
+                print('\r' + str_, end=' ')
 
-                    time_last = time.time()
+                time_last = time.time()
 
         except tf.errors.OutOfRangeError:
             pass
 
-        # 写文件
         log(str_, need_print=False)
 
-    def train_individual(self, sess, n_epochs, lr):
-        self.optimize(lr)
-
-        sess.run(tf.variables_initializer(self.opt.variables()))
-        for epoch in range(n_epochs):
-            self.train_one_epoch_individual(sess, self.train_init, epoch)
-            acc, acc_a, acc_b, acc_c = self.eval_once(sess, self.test_init, epoch)
-
-            if self.cfg['basic']['pruning_method'] == 'info_bottle':
-                cr = self.get_CR(sess, self.cluster_res_dict)
-
-            if (epoch + 1) % self.cfg['train'].getint('save_step') == 0:
-                if self.cfg['basic']['pruning_method'] != 'info_bottle':
-                    name = '%s/tr%.2d-epo%.3d-acc%.4f-%.4f-%.4f' % (
-                        self.cfg['path']['path_save'], self.cnt_train, epoch + 1, acc, acc_a, acc_b)
-                else:
-                    name = '%s/tr%.2d-epo%.3d-cr%.4f-acc%.4f-%.4f-%.4f' % (
-                        self.cfg['path']['path_save'], self.cnt_train, epoch + 1, cr, acc, acc_a, acc_b)
-                self.save_weight(sess, name)
-
-        # Count of training
-        self.cnt_train += 1
-        # Save into cfg
-        name_train = 'train%d' % self.cnt_train
-        self.cfg.add_section(name_train)
-        self.cfg.set(name_train, 'function', 'train_individual')
-        self.cfg.set(name_train, 'n_epochs', str(n_epochs))
-        self.cfg.set(name_train, 'lr', str(lr))
-        self.cfg.set(name_train, 'acc', str(acc))
-        self.cfg.set(name_train, 'acc_a', str(acc_a))
-        self.cfg.set(name_train, 'acc_b', str(acc_b))
-        self.cfg.set(name_train, 'acc_c', str(acc_c))
-        if self.cfg['basic']['pruning_method'] == 'info_bottle':
-            self.cfg.set(name_train, 'cr', str(cr))
-
-    def train(self, sess, n_epochs, lr, save_clean=False):
+    def train(self, sess, n_epochs, lr, type='normal', save_clean=False):
         self.optimize(lr)
 
         save_step = read_i(self.cfg, 'train', 'save_step')
         sess.run(tf.variables_initializer(self.opt.variables()))
 
         for epoch in range(n_epochs):
-            self.train_one_epoch(sess, self.train_init, epoch)
-            acc, acc_list = self.eval_once(sess, self.test_init, epoch)
+            if type == 'normal':
+                self.train_one_epoch(sess, self.train_init, epoch)
+            elif type == 'individual':
+                self.train_one_epoch_individual(sess, self.train_init, epoch)
 
-            if self.pruning:
-                cr, cr_flops = self.get_CR(sess, self.cluster_res_dict)
+            # 为了节省时间
+            if (epoch + 1) % 2 == 0:
+                acc, acc_list = self.eval_once(sess, self.test_init, epoch)
 
-            if self.save_now((epoch + 1), n_epochs, save_step):
-                if self.pruning:
-                    name = '%s/tr%.2d-epo%.3d-cr%.4f-acc%.4f' % (
-                        read_s(self.cfg, 'path', 'path_save'), self.cnt_train, epoch + 1, cr, acc)
-                else:
-                    name = '%s/tr%.2d-epo%.3d-acc%.4f' % (
-                        read_s(self.cfg, 'path', 'path_save'), self.cnt_train, epoch + 1, acc)
+                # 只有偶数的时候才计算压缩率
+                if self.pruning and (epoch + 1) % 2 == 0:
+                    cr, cr_flops = self.get_CR(sess, self.cluster_res_dict)
 
-                self.save_weight(sess, name)
+                if self.save_now((epoch + 1), n_epochs, save_step):
+                    if self.pruning:
+                        name = '%s/tr%.2d-epo%.3d-cr%.4f-acc%.4f' % (
+                            read_s(self.cfg, 'path', 'path_save'), self.cnt_train, epoch + 1, cr, acc)
+                    else:
+                        name = '%s/tr%.2d-epo%.3d-acc%.4f' % (
+                            read_s(self.cfg, 'path', 'path_save'), self.cnt_train, epoch + 1, acc)
+
+                    self.save_weight(sess, name)
 
         if save_clean:
             self.save_weight_clean(sess, '%s-CLEAN' % name)
@@ -649,7 +619,8 @@ class Model_Combined(BaseModel):
         self.cnt_train += 1
         # Save into cfg
         name_train = 'train%d' % self.cnt_train
-        self.cfg.add_section(name_train)
+        if not self.cfg.has_section(name_train):
+            self.cfg.add_section(name_train)
         self.cfg.set(name_train, 'n_epochs', str(n_epochs))
         self.cfg.set(name_train, 'lr', str(lr))
         self.cfg.set(name_train, 'acc', str(acc))
@@ -657,6 +628,7 @@ class Model_Combined(BaseModel):
 
         if self.pruning:
             self.cfg.set(name_train, 'cr', str(cr))
+            self.cfg.set(name_train, 'kl_factor', str(self.kl_factor))
 
     def get_CR(self, sess, cluster_res_dict):
         net_origin = dict()
@@ -693,6 +665,7 @@ class Model_Combined(BaseModel):
             # 读入图片的大小
             h, w = read_l(self.cfg, 'data', 'length')
             params, flops = 0, 0
+            prod_kernel = np.prod(self.kernel_size)
 
             for ind, name in enumerate(self.structure):
                 if name == 'p':
@@ -703,19 +676,19 @@ class Model_Combined(BaseModel):
                         # 第一层，需要特殊处理
                         channel = read_i(self.cfg, 'data', 'channels')
                         for task_index in range(-1, self.n_tasks):
-                            params += 9 * channel * net_dict[name][task_index]
-                            flops += 2 * (9 * channel + 1) * h * w * net_dict[name][task_index]
+                            params += prod_kernel * channel * net_dict[name][task_index]
+                            flops += (2 * prod_kernel * channel - 1) * h * w * net_dict[name][task_index]
                     else:
                         n_CEN_last = n_dict_last[-1]
                         for task_index in range(self.n_tasks):
                             n_in = n_CEN_last + n_dict_last[task_index]
 
-                            params += 9 * n_in * net_dict[name][task_index]
-                            flops += 2 * (9 * n_in + 1) * h * w * net_dict[name][task_index]
+                            params += prod_kernel * n_in * net_dict[name][task_index]
+                            flops += (2 * prod_kernel * n_in - 1) * h * w * net_dict[name][task_index]
 
                         # CEN单独处理
-                        params += 9 * n_CEN_last * net_dict[name][-1]
-                        flops += 2 * (9 * n_CEN_last) * h * w * net_dict[name][-1]
+                        params += prod_kernel * n_CEN_last * net_dict[name][-1]
+                        flops += (2 * prod_kernel * n_CEN_last - 1) * h * w * net_dict[name][-1]
 
                     n_dict_last = net_dict[name]
                 elif name.startswith('f') and name != 'fla':
@@ -730,7 +703,7 @@ class Model_Combined(BaseModel):
                     flops += (2 * n_CEN_last - 1) * net_dict[name][-1]
                     n_dict_last = net_dict[name]
                 elif name == 'fla':
-                    n_CEN_last = n_CEN_last * h * w
+                    n_dict_last = [_ * h * w for _ in n_dict_last]
 
             return params, flops
 
@@ -752,14 +725,14 @@ class Model_Combined(BaseModel):
         masks_tf, names = list(), list()
         for layer in self.layers:
             if layer.layer_type == 'C_vib':
-                masks_tf.append(layer.get_mask(read_f(self.cfg, 'pruning', 'ib_threshold_conv')))
+                masks_tf.append(layer.get_mask(read_f(self.cfg, 'pruning', 'ib_threshold_conv'), dtype=tf.bool))
                 names.append(layer.layer_name)
             elif layer.layer_type == 'F_vib':
-                masks_tf.append(layer.get_mask(read_f(self.cfg, 'pruning', 'ib_threshold_fc')))
+                masks_tf.append(layer.get_mask(read_f(self.cfg, 'pruning', 'ib_threshold_fc'), dtype=tf.bool))
                 names.append(layer.layer_name)
 
         masks = sess.run(masks_tf)
-        masks_dict = dict(zip(names, masks))
+        masks_dict = dict(zip(names, [_.tolist() for _ in masks]))
 
         def rm_none(list_):
             while None in list_:
@@ -767,31 +740,54 @@ class Model_Combined(BaseModel):
             return list_
 
         weight_dict = self.fetch_weight(sess)
+        h, w = read_l(self.cfg, 'data', 'length')
+        flatten = False
         name_last = None
+
         for ind, name in enumerate(self.structure):
-            if name.startswith('c') or name.startswith('f') and name == 'fla':
+            if name.startswith('c') or name.startswith('f') and name != 'fla':
                 for task_index in range(-1, self.n_tasks):
                     # If the layer exists
                     if self.get_layer_by_name('%s/%s' % (name, t2c(task_index))) is None:
                         continue
 
-                    if name_last is None:
-                        mask_input = np.array([True, True, True])
+                    if ind == 0:
+                        mask_input = np.ones(read_i(self.cfg, 'data', 'channels'), dtype=np.bool)
                     else:
                         mask_input = np.concatenate(rm_none(
                             [masks_dict.get('%s_vib/%s' % (name_last, t2c(_)), None) for _ in set([task_index, -1])]))
-                    mask_output = masks_dict.get('%s_vib/%s' % (name, t2c(task_index)))
 
-                    # Mask
-                    weight_dict['%s/%s/w' % (name, t2c(task_index))] = \
-                        weight_dict['%s/%s/w' % (name, t2c(task_index))][..., mask_input, :][..., mask_output]
-                    weight_dict['%s/%s/b' % (name, t2c(task_index))] = weight_dict['%s/%s/b' % (name, t2c(task_index))][
-                        mask_output]
-                    weight_dict['%s_vib/%s/mu' % (name, t2c(task_index))] = \
-                        weight_dict['%s_vib/%s/mu' % (name, t2c(task_index))][mask_output]
-                    weight_dict['%s_vib/%s/logD' % (name, t2c(task_index))] = \
-                        weight_dict['%s_vib/%s/logD' % (name, t2c(task_index))][mask_output]
+                        if flatten:
+                            mask_input = np.concatenate([mask_input for _ in range(h * w)], axis=0)
 
+                    # 不是最后一层
+                    if ind != len(self.structure) - 1:
+
+                        mask_output = masks_dict.get('%s_vib/%s' % (name, t2c(task_index)))
+
+                        # Mask
+                        weight_dict['%s/%s/w' % (name, t2c(task_index))] = \
+                            weight_dict['%s/%s/w' % (name, t2c(task_index))][..., mask_input, :][..., mask_output]
+                        weight_dict['%s/%s/b' % (name, t2c(task_index))] = \
+                            weight_dict['%s/%s/b' % (name, t2c(task_index))][
+                                mask_output]
+                        # 输出层没有vib层
+
+                        weight_dict['%s_vib/%s/mu' % (name, t2c(task_index))] = \
+                            weight_dict['%s_vib/%s/mu' % (name, t2c(task_index))][mask_output]
+                        weight_dict['%s_vib/%s/logD' % (name, t2c(task_index))] = \
+                            weight_dict['%s_vib/%s/logD' % (name, t2c(task_index))][mask_output]
+                    else:
+                        # 最后一层
+                        weight_dict['%s/%s/w' % (name, t2c(task_index))] = weight_dict[
+                                                                               '%s/%s/w' % (name, t2c(task_index))][...,
+                                                                           mask_input, :]
+
+                flatten = False
                 name_last = name
+            elif name == 'fla':
+                flatten = True
+            elif name == 'p':
+                h, w = h // 2, w // 2
 
         pickle.dump(weight_dict, open(path_save, 'wb'))

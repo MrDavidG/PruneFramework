@@ -49,6 +49,10 @@ class BaseModel:
         self.structure = read_l(config, 'model', 'structure')
         self.dimension = read_l(config, 'model', 'dimension')
         self.activation = read_l(config, 'model', 'activation')
+        if config.has_option('model', 'kernel_size'):
+            self.kernel_size = read_l(config, 'model', 'kernel_size')
+        else:
+            self.kernel_size = [3, 3]
 
         # VIBNet
         self.kl_total = 0

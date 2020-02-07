@@ -54,7 +54,7 @@ class Model(BaseModel):
             self.weight_dict = self.init_weights(path_weights_pretrain=path_pretrain)
             self.initial_weight = True
 
-        if self.pruning and self.structure[0] + '/vib/mu' not in self.weight_dict.keys():
+        if self.pruning and self.structure[0] + '_vib/mu' not in self.weight_dict.keys():
             log_l('Initialize vib weights')
             self.weight_dict = dict(self.weight_dict, **self.init_weights_vib())
         else:
@@ -66,8 +66,9 @@ class Model(BaseModel):
                 dtype=np.float32)
 
         def filters_variable(in_channel, dim_channel):
-            return np.random.normal(loc=0, scale=np.sqrt(1. / in_channel / 9.),
-                                    size=[3, 3, in_channel, dim_channel]).astype(np.float32)
+            return np.random.normal(loc=0, scale=np.sqrt(1. / in_channel / np.prod(self.kernel_size)),
+                                    size=[self.kernel_size[0], self.kernel_size[1], in_channel, dim_channel]).astype(
+                np.float32)
 
         def bias_variable(dim_fc):
             return (np.zeros(shape=[dim_fc], dtype=np.float32)).astype(dtype=np.float32)
@@ -272,7 +273,7 @@ class Model(BaseModel):
         return weight_dict
 
     def save_weight_clean(self, sess, save_path):
-        def get_expand(array, h, w, original_channel_num_a=512):
+        def get_expand(array, h, w, original_channel_num_a):
             res_list = list()
             step = h * w
             for i in range(step):
@@ -400,6 +401,10 @@ class Model(BaseModel):
 
                 self.save_weight(sess, name)
 
+        if n_epoch == 0:
+            self.save_weight(sess, '%s/tr%.2d-epo%.3d' % (self.cfg['path']['path_save'], self.cnt_train, 0))
+            acc = '-'
+
         if save_clean:
             self.save_weight_clean(sess, '%s-CLEAN' % name)
 
@@ -428,17 +433,18 @@ class Model(BaseModel):
         total_flops, remain_flops = 0, 0
 
         # in_neurons, in_pruned
-        in_n, in_r = 3, 3
+        in_n, in_r = read_i(self.cfg, 'data', 'channels'), read_i(self.cfg, 'data', 'channels')
+        prod_kernel = np.prod(self.kernel_size)
         for name_layer, out_n in zip(self.structure[:-1], self.dimension[:-1]):
             if name_layer == 'p':
                 length_fm = [length_fm[0] // 2, length_fm[1] // 2]
             elif name_layer.startswith('c'):
                 # param
-                total_params += in_n * out_n * 9
-                remain_params += in_r * remain_state[name_layer] * 9
+                total_params += in_n * out_n * prod_kernel
+                remain_params += in_r * remain_state[name_layer] * prod_kernel
                 # flop
-                total_flops += 2 * (9 * in_n + 1) * np.prod(length_fm) * out_n
-                remain_flops += 2 * (9 * in_r + 1) * np.prod(length_fm) * remain_state[name_layer]
+                total_flops += (2 * prod_kernel * in_n - 1) * np.prod(length_fm) * out_n
+                remain_flops += (2 * prod_kernel * in_r - 1) * np.prod(length_fm) * remain_state[name_layer]
                 # For next layer
                 in_n, in_r = out_n, remain_state[name_layer]
             elif name_layer.startswith('f') and name_layer != 'fla':
@@ -451,7 +457,10 @@ class Model(BaseModel):
                 # For next layer
                 in_n, in_r = out_n, remain_state[name_layer]
             elif name_layer == 'fla':
-                continue
+                in_n = in_n * np.prod(length_fm)
+                in_r = in_r * np.prod(length_fm)
+
+            # print(name_layer, total_flops)
 
         # Output layer
         total_params += in_n * self.n_classes
@@ -459,6 +468,8 @@ class Model(BaseModel):
 
         total_flops += (2 * in_n - 1) * self.n_classes
         remain_flops += (2 * in_r - 1) * self.n_classes
+
+        # print('output', total_flops)
 
         cr = np.around(float(remain_params) / total_params, decimals=5)
         cr_flops = np.around(float(remain_flops) / total_flops, decimals=5)

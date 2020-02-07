@@ -19,7 +19,8 @@ import configparser
 import os
 
 
-def get_cfg_rdnet(task_name, model_name, data_name, time_stamp, path_model=None, file_cfg_global='global.cfg'):
+def get_cfg_rdnet(task_name, model_name, data_name, time_stamp, path_model=None, file_cfg_global='global.cfg',
+                  suffix=None):
     cfg_base, cfg_task, cfg_data, cfg_model = load_cfg('../config/' + file_cfg_global), \
                                               load_cfg('../config/task.cfg'), \
                                               load_cfg('../config/data.cfg'), \
@@ -28,22 +29,18 @@ def get_cfg_rdnet(task_name, model_name, data_name, time_stamp, path_model=None,
     # 以global为主体
     cfg_base['basic']['time_stamp'] = time_stamp
 
-    def combine_cfg(cfg, key, value):
-        if value is not None:
-            cfg_base.add_section(key)
-            cfg_base.set(key, 'name', value)
-            for option in cfg.options(value):
-                cfg_base.set(key, option, cfg[value][option])
-
     # task
-    combine_cfg(cfg_task, 'task', task_name)
+    combine_cfg(cfg_base, cfg_task, 'task', task_name)
     # data
-    combine_cfg(cfg_data, 'data', data_name)
+    combine_cfg(cfg_base, cfg_data, 'data', data_name)
     # model
-    combine_cfg(cfg_model, 'model', model_name)
+    combine_cfg(cfg_base, cfg_model, 'model', model_name)
 
     cfg_base['path']['path_load'] = str(path_model)
-    cfg_base['path']['path_save'] += '%s-%s-rdnet-%s' % (task_name, model_name, time_stamp)
+    if suffix is None:
+        cfg_base['path']['path_save'] += '%s-%s-rdnet-%s' % (task_name, model_name, time_stamp)
+    else:
+        cfg_base['path']['path_save'] += '%s-%s-rdnet-%s-%s' % (task_name, model_name, time_stamp, suffix)
     cfg_base['path']['path_cfg'] = cfg_base['path']['path_save'] + '/cfg.ini'
     cfg_base['path']['path_log'] = cfg_base['path']['path_save'] + '/log.log'
     cfg_base['path']['path_dataset'] = cfg_base['path']['path_dataset'] + data_name + '/'
@@ -74,19 +71,12 @@ def get_cfg(task_name, model_name, data_name, time_stamp, path_model=None, file_
     # 以global为主体
     cfg_base['basic']['time_stamp'] = time_stamp
 
-    def combine_cfg(cfg, key, value):
-        if value is not None:
-            cfg_base.add_section(key)
-            cfg_base.set(key, 'name', value)
-            for option in cfg.options(value):
-                cfg_base.set(key, option, cfg[value][option])
-
     # task
-    combine_cfg(cfg_task, 'task', task_name)
+    combine_cfg(cfg_base, cfg_task, 'task', task_name)
     # data
-    combine_cfg(cfg_data, 'data', data_name)
+    combine_cfg(cfg_base, cfg_data, 'data', data_name)
     # model
-    combine_cfg(cfg_model, 'model', model_name)
+    combine_cfg(cfg_base, cfg_model, 'model', model_name)
 
     # path_cfg, path_log
     cfg_base['path']['path_load'] = str(path_model)
@@ -119,7 +109,31 @@ def get_cfg(task_name, model_name, data_name, time_stamp, path_model=None, file_
     return cfg_base
 
 
+def get_cfg_data(data_name, file_cfg_global='global.cfg'):
+    """
+    Create cfg object for data analysis rather than training
+    Args:
+        data_name: The name of dataset, used to load dataset
+
+    Returns:
+        Cfg object
+    """
+    cfg_base, cfg_data = load_cfg('../config/' + file_cfg_global), load_cfg('../config/data.cfg')
+
+    combine_cfg(cfg_base, cfg_data, 'data', data_name)
+
+    return cfg_base
+
+
 def load_cfg(path_cfg):
     cfg = configparser.ConfigParser()
     cfg.read(path_cfg)
     return cfg
+
+
+def combine_cfg(cfg_base, cfg, key, value):
+    if value is not None:
+        cfg_base.add_section(key)
+        cfg_base.set(key, 'name', value)
+        for option in cfg.options(value):
+            cfg_base.set(key, option, cfg[value][option])

@@ -52,7 +52,7 @@ def get_layers_output(model_path, batch_size, with_relu=True):
     model.build()
 
     sess.run(tf.global_variables_initializer())
-    sess.run(model.train_init)
+    sess.run(model.test_init)
 
     layers_output_tf = [layer.layer_output for layer in model.layers]
     layers_output, labels = sess.run([layers_output_tf] + [model.Y], feed_dict={model.is_training: False})
@@ -111,11 +111,13 @@ def draw_mi_distribution(layer_output, F, labelixs, labelprobs, entropy_func_upp
 def get_label_info(y):
     labelixs_x, labelprobs_x = list(), list()
     for label_index in range(y.shape[1]):
+        # 记录哪些位置是1,哪些位置是-1
         labelixs = {}
         labelixs[0] = y[:, label_index] == -1
         labelixs[1] = y[:, label_index] == 1
         labelixs_x.append(labelixs)
 
+        # 各个维度为1的概率
         prob_label = np.mean((y[:, label_index] == 1).astype(np.float32), axis=0)
         labelprobs = np.array([1 - prob_label, prob_label])
         labelprobs_x.append(labelprobs)
@@ -132,10 +134,12 @@ def t2c(task_index):
 def extract_unrelevance_neurons(layer_output_all, n_neurons, labelixs_list, labelprobs_list, entropy_func_upper,
                                 alpha_threshold):
     def get_irrelevance_neurons(label_name, labelix, labelprobs):
+        # 保存的是与该任务无关的neurons
         neurons_list_selected = list()
         count = 1
 
-        # F保留和task有关系的神经元
+        # F用来保留和task有关系的神经元
+        # 也就是F需要进行变化
         F = np.arange(n_neurons).tolist()
         while True:
             min_index_neuron, mi_min = argmin_marginal_mi(layer_output_all, F, neurons_list_selected, labelix,
@@ -218,10 +222,10 @@ def cluster_neurons(cfg, y_list, layers_output_list, cluster_threshold_dict, clu
         cluster_res_dict[structure[ind]] = clu_layer_dict
 
     # Output layer
-    labels_str = read_s(cfg, 'task', 'labels_task')[1:-1]
+    labels_str = read_s(cfg, 'task', 'labels_task').strip().replace('],[', ']$[')[1:-1]
 
     labels = dict()
-    for ind, item in enumerate(labels_str.split(',')):  # [1-10]/[1,2,3]
+    for ind, item in enumerate(labels_str.split('$')):  # [1-10]/[1,2,3]
         if '-' in item:
             s, e = [int(_) for _ in item[1:-1].split('-')]
             labels[t2c(ind)] = np.arange(s, e).tolist()
@@ -239,7 +243,7 @@ def cluster_neurons(cfg, y_list, layers_output_list, cluster_threshold_dict, clu
 
         log_t('Cluster layer %d, alpha threshold = %f' % (layer_index, alpha_threshold))
 
-        # Obtain output of this layer
+        # Obtain outputs of this layer of all models
         layer_output_list = [layers_output_list[task_index][layer_index] for task_index in range(n_tasks)]
 
         # 展开
@@ -257,14 +261,20 @@ def cluster_neurons(cfg, y_list, layers_output_list, cluster_threshold_dict, clu
                                                                      entropy_func_upper,
                                                                      alpha_threshold)
 
+        # Save results
         for task_index in range(n_tasks):
             cluster_res_dict[structure[layer_index]][t2c(task_index)] = list(neurons_part_list[task_index])
         cluster_res_dict[structure[layer_index]]['CEN'] = list(neurons_cen)
 
+        path = path_save + '/cluster_results/cluster_results_layer-%s' % str(layer_index)
+        pickle.dump(cluster_res_dict, open(path, 'wb'))
+
     # Save the final result
-    path = path_save + '/cluster_results/cluster_result_threshold-%s' % str(cluster_threshold_dict)
+    path = path_save + '/cluster_results/cluster_result_threshold-%s' % str(cluster_threshold_dict).replace('\'',
+                                                                                                            '').replace(
+        '\"', '')
     pickle.dump(cluster_res_dict, open(path, 'wb'))
-    return cluster_res_dict
+    return cluster_res_dict, path
 
 
 def model_summary(cluster_res_dict):
@@ -283,7 +293,7 @@ def model_summary(cluster_res_dict):
 
 
 def get_cluster_res(cfg):
-    path_cluster_res = cfg['cluster']['path_cluster_res']
+    path_cluster_res = read_s(cfg, 'cluster', 'path_cluster_res')
     if path_cluster_res == 'None':
         print('[%s] Get the layer outputs of the models' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         layers_output_list, labels_list = list(), list()
@@ -294,13 +304,16 @@ def get_cluster_res(cfg):
             layers_output_list.append(layers_output)
             labels_list.append(labels)
 
-        cluster_res_dict = cluster_neurons(cfg, labels_list, layers_output_list,
-                                           read_l(cfg, 'cluster', 'cluster_threshold_dict'),
-                                           read_l(cfg, 'cluster', 'cluster_layer_range'),
-                                           read_s(cfg, 'path', 'path_save'))
+        cluster_res_dict, path = cluster_neurons(cfg, labels_list, layers_output_list,
+                                                 read_l(cfg, 'cluster', 'cluster_threshold_dict'),
+                                                 read_l(cfg, 'cluster', 'cluster_layer_range'),
+                                                 read_s(cfg, 'path', 'path_save'))
 
     else:
         cluster_res_dict = pickle.load(open(path_cluster_res.replace('\"', '\''), 'rb'))
+        path = path_cluster_res
+
+    cfg.set('path', 'path_cluster_res', path)
 
     model_summary(cluster_res_dict)
 
@@ -345,23 +358,22 @@ def retrain_model(cfg, cluster_res_dict, plan_retrain):
     log_l('')
 
     for plan in plan_retrain:
-        model.set_kl_factor(plan['kl_factor'])
+        if 'kl_factor' in plan.keys():
+            model.set_kl_factor(plan['kl_factor'])
 
         for set_ in plan['train']:
-            if plan['type'] == 'normal':
-                model.train(sess=sess, n_epochs=set_['n_epochs'], lr=set_['lr'], save_clean=set_['save_clean'])
-            # elif plan['type'] == 'individual':
-            #     model.train_individual(sess=sess, n_epochs=set_['n_epochs'], lr=set_['lr'])
+            model.train(sess=sess, n_epochs=set_['n_epochs'], lr=set_['lr'], type=set_.get('type', 'normal'),
+                        save_clean=set_.get('save_clean', False))
         model.save_cfg()
 
 
-def obtain_cfg(task_name, model_name, data_name, path_model, pruning_set, cluster_set):
+def obtain_cfg(task_name, model_name, data_name, path_model, pruning_set, cluster_set, suffix=None):
     time_stamp = str(datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
 
-    cfg = get_cfg_rdnet(task_name, model_name, data_name, time_stamp, path_model)
+    cfg = get_cfg_rdnet(task_name, model_name, data_name, time_stamp, path_model, suffix=suffix)
 
     # Pruning
-    cfg.set('basic', 'pruning_method', 'info_bottle')
+    cfg.set('basic', 'pruning_method', pruning_set['name'])
     cfg.add_section('pruning')
     for option in pruning_set.keys():
         cfg.set('pruning', option, str(pruning_set[option]))
@@ -374,10 +386,7 @@ def obtain_cfg(task_name, model_name, data_name, path_model, pruning_set, cluste
     return cfg
 
 
-def pruning(task_name, model_name, data_name, path_model, pruning_set, cluster_set, plan_retrain):
-    # Config
-    cfg = obtain_cfg(task_name, model_name, data_name, path_model, pruning_set, cluster_set)
-
+def init_global(cfg):
     global dim_list
     dim_list = [_ for _ in read_l(cfg, 'model', 'dimension') if _ != 0]
 
@@ -387,12 +396,22 @@ def pruning(task_name, model_name, data_name, path_model, pruning_set, cluster_s
     global structure
     structure = [_ for _ in read_l(cfg, 'model', 'structure') if _.startswith('c') or _.startswith('f') and _ != 'fla']
 
+
+def pruning(task_name, model_name, data_name, path_model, pruning_set, cluster_set, plan_retrain, retrain=True,
+            suffix=None):
+    # Config
+    cfg = obtain_cfg(task_name, model_name, data_name, path_model, pruning_set, cluster_set, suffix)
+
+    # Global
+    init_global(cfg)
+
     # Cluster
     cluster_res_dict = get_cluster_res(cfg)
 
     # Save cfg
-    with open(cfg['path']['path_cfg'], 'w') as file:
+    with open(read_s(cfg, 'path', 'path_cfg'), 'w') as file:
         cfg.write(file)
 
     # Retrain
-    retrain_model(cfg, cluster_res_dict, plan_retrain)
+    if retrain:
+        retrain_model(cfg, cluster_res_dict, plan_retrain)

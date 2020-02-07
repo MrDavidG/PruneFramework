@@ -88,7 +88,8 @@ class ImageDataGenerator(DataGenerator):
                 labels += [_ + 1 for _ in range(int(start), int(end))]
             else:
                 labels.append(int(item) + 1)
-        labels.sort()
+        # 这里不用排序，因为可能存在[[0-5],[0-5]]这种两个完全一样的label
+        # labels.sort()
 
         if data_name == 'celeba':
             path_img = path_data + 'img_align_celeba/'
