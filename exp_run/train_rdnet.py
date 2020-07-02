@@ -62,104 +62,82 @@ if __name__ == '__main__':
 
     task_lenet5 = [
         # baseline
-        # {
-        #     'task_name': 'rdnet_fashionmnist',
-        #     'model_name': 'rdnet_lenet5',
-        #     'data_name': 'fashionmnist',
-        #     'path_cluster_res': None,
-        #     'cluster_conv': 0.1,
-        #     'cluster_fc': 0.1,
-        #     'cluster_layer_range': list(),
-        #
-        #     'path_model': None,
-        #
-        #     'gamma_conv': 1.,
-        #     'gamma_fc': 45.,
-        #     'kl_mult': [0.04, 0, 0.07, 0, 0, 8., 6.],
-        #     'plan_retrain': [
-        #         {'kl_factor': 3e-6,
-        #          'train': [{'n_epochs': 30, 'lr': 0.01, 'type': 'normal', 'save_clean': False}]},
-        #         {'kl_factor': 1e-7,
-        #          'train': [{'n_epochs': 10, 'lr': 0.001, 'type': 'normal', 'save_clean': False}]},
-        #         {'kl_factor': 1e-8,
-        #          'train': [{'n_epochs': 10, 'lr': 0.001, 'type': 'individual', 'save_clean': False}]
-        #          }
-        #     ]
-        # },
         {
             'task_name': 'rdnet_fashionmnist',
             'model_name': 'rdnet_lenet5',
             'data_name': 'fashionmnist',
-            'path_cluster_res': '../exp_files/rdnet_fashionmnist-rdnet_lenet5-rdnet-2019-12-20_07-38-02/cluster_results/cluster_result_threshold-{\'conv\': 0.2, \'fc\': 0.15}',
-            'cluster_conv': 0.2,
-            'cluster_fc': 0.15,
-            'cluster_layer_range': np.arange(0, 4).tolist(),
+            'path_cluster_res': None,
+            'cluster_conv': 0.1,
+            'cluster_fc': 0.1,
+            'cluster_layer_range': list(),
 
             'path_model': None,
 
             'gamma_conv': 1.,
             'gamma_fc': 45.,
-            'kl_mult': [0.0625, 0, 0.4, 0, 0, 8., 5.5],
+            'kl_mult': [0.01, 0, 0.05, 0, 0, 8., 8.],
             'plan_retrain': [
-                {'kl_factor': 3e-6,
+                {'kl_factor': 2.559e-6,
                  'train': [{'n_epochs': 30, 'lr': 0.01, 'type': 'normal', 'save_clean': False}]},
                 {'kl_factor': 1e-7,
-                 'train': [{'n_epochs': 10, 'lr': 0.01, 'type': 'normal', 'save_clean': False}]},
-                {'kl_factor': 1e-7,
-                 'train': [{'n_epochs': 5, 'lr': 0.001, 'type': 'normal', 'save_clean': False}]},
+                 'train': [{'n_epochs': 10, 'lr': 0.001, 'type': 'normal', 'save_clean': False}]},
                 {'kl_factor': 1e-8,
                  'train': [{'n_epochs': 10, 'lr': 0.001, 'type': 'individual', 'save_clean': False}]
                  }
             ]
+        },
+        {
+            'task_name': 'rdnet_fashionmnist',
+            'model_name': 'rdnet_lenet5',
+            'data_name': 'fashionmnist',
+
+            # 'path_cluster_res': None,
+            'path_cluster_res': '../exp_files/cluster_res_lenet5',
+            # 'path_cluster_res': '../exp_files/rdnet_fashionmnist-rdnet_lenet5-rdnet-2019-12-20_07-38-02/cluster_results/cluster_result_threshold-{\'conv\': 0.2, \'fc\': 0.15}',
+            'cluster_conv': 5.,
+            'cluster_fc': 0.2,
+            'cluster_layer_range': np.arange(1, 2).tolist(),
+
+            # 'path_model': None,
+            'path_model':'../exp_files/rdnet_fashionmnist-rdnet_lenet5-rdnet-2020-05-27_05-31-19-RdNet_!!!!!!!!!!!!!!!!!!/tr00-epo030-cr0.0747-acc0.9402',
+
+            'gamma_conv': 1.,
+            'gamma_fc': 45.,
+            'kl_mult': [0.0725, 0, 0.3, 0, 0, 8.2, 5.5],
+            'plan_retrain': [
+                # {'kl_factor': 3.1e-6,
+                #  'train': [{'n_epochs': 30, 'lr': 0.01, 'type': 'normal', 'save_clean': False}]},
+                {'kl_factor': 1e-7,
+                 'train': [{'n_epochs': 20, 'lr': 0.01, 'type': 'normal', 'save_clean': False}]},
+                {'kl_factor': 1e-7,
+                 'train': [{'n_epochs': 20, 'lr': 0.005, 'type': 'normal', 'save_clean': False}]},
+                {'kl_factor': 1e-7,
+                 'train': [{'n_epochs': 20, 'lr': 0.001, 'type': 'normal', 'save_clean': False}]},
+                {'kl_factor': 1e-8,
+                 'train': [{'n_epochs': 20, 'lr': 0.001, 'type': 'individual', 'save_clean': False}]
+                 }
+            ],
+            'suffix': 'RdNet-refine'
         }
     ]
 
     task_lfw15 = [
         # baseline
-        # {
-        #     'task_name': 'rdnet_lfw15',
-        #     'model_name': 'vgg128',
-        #     'data_name': 'lfw',
-        #     'path_cluster_res': None,
-        #     'cluster_conv': 0.1,
-        #     'cluster_fc': 0.1,
-        #     'cluster_layer_range': list(),
-        #
-        #     'path_model': None,
-        #
-        #     'gamma_conv': 1.,
-        #     'gamma_fc': 30.,
-        #     'kl_mult': [1. / 32, 1. / 32, 0,
-        #                 1. / 16, 1. / 16, 0,
-        #                 1. / 8, 1. / 8, 1. / 8, 0,
-        #                 1. / 2, 1. / 2, 1. / 2, 0,
-        #                 2., 2., 2., 0,
-        #                 0,
-        #                 1.5, 1.],
-        #     'plan_retrain': [
-        #         {'kl_factor': 1e-5,
-        #          'train': [{'n_epochs': 60, 'lr': 0.01, 'type': 'normal', 'save_clean': False}]},
-        #         {'kl_factor': 1e-6,
-        #          'train': [{'n_epochs': 10, 'lr': 0.001, 'type': 'individual', 'save_clean': False}]}
-        #     ]
-        # },
-        # rdnet
         {
             'task_name': 'rdnet_lfw15',
             'model_name': 'vgg128',
             'data_name': 'lfw',
-            'path_cluster_res': '../exp_files/rdnet_lfw15-vgg128-rdnet-2019-12-06_03-53-59/cluster_results/cluster_result_threshold-{\'conv\': 0.05, \'fc\': 0.05}',
+            'path_cluster_res': None,
+            'cluster_conv': 0.1,
+            'cluster_fc': 0.1,
+            'cluster_layer_range': list(),
 
-            'cluster_conv': 0.8,
-            'cluster_fc': 0.8,
-            'cluster_layer_range': np.arange(13, 15).tolist(),
-
-            'path_model': '/local/home/david/Remote/PruneFramework/exp_files/rdnet_lfw15-vgg128-rdnet-2020-01-23_11-30-03/tr02-epo010-cr0.0000-acc0.8544',
-            # None,
+            # 'path_model': None,
+            'path_model':'../exp_files/rdnet_lfw15-vgg128-rdnet-2020-05-31_09-53-18/tr01-epo010-cr0.0001-acc0.8538',
 
             'gamma_conv': 1.,
             'gamma_fc': 30.,
-            'kl_mult': [1.02 / 32, 1. / 32, 0,
+            'kl_mult': [1. / 32, 1. / 32, 0,
                         1. / 16, 1. / 16, 0,
                         1. / 8, 1. / 8, 1. / 8, 0,
                         1. / 2, 1. / 2, 1. / 2, 0,
@@ -168,17 +146,56 @@ if __name__ == '__main__':
                         1.5, 1.],
             'plan_retrain': [
                 # {'kl_factor': 1.2e-5,
-                #  'train': [{'n_epochs': 70, 'lr': 0.01, 'type': 'normal', 'save_clean': False}]},
-                # {'kl_factor': 1e-6,
-                #  'train': [{'n_epochs': 10, 'lr': 0.001, 'type': 'normal', 'save_clean': False}]},
-                # {'kl_factor': 1e-7,
-                #  'train': [{'n_epochs': 10, 'lr': 0.001, 'type': 'normal', 'save_clean': False}]},
-                {'kl_factor': 1e-7,
-                 'train': [{'n_epochs': 10, 'lr': 0.001, 'type': 'individual', 'save_clean': False}]},
-                {'kl_factor': 1e-7,
-                 'train': [{'n_epochs': 10, 'lr': 0.0001, 'type': 'individual', 'save_clean': False}]},
+                #  'train': [{'n_epochs': 60, 'lr': 0.01, 'type': 'normal', 'save_clean': False}]},
+                {'kl_factor': 0.005e-6, #0.32
+                 'train': [{'n_epochs': 10, 'lr': 0.001, 'type': 'normal', 'save_clean': False}]}
             ]
-        }
+        },
+        # rdnet
+        # {
+        #     'task_name': 'rdnet_lfw15',
+        #     'model_name': 'vgg128',
+        #     'data_name': 'lfw',
+        #     'path_cluster_res': '../exp_files/cluster_res_lfw15_vgg128',
+        #     # 正常
+        #     # 'path_cluster_res': '../exp_files/rdnet_lfw15-vgg128-rdnet-2019-12-06_03-53-59/cluster_results/cluster_result_threshold-{\'conv\': 0.05, \'fc\': 0.05}',
+        #     # 'path_cluster_res': None,
+        #
+        #     'cluster_conv': 7.,
+        #     'cluster_fc': 6.,
+        #     'cluster_layer_range': np.arange(11, 15).tolist(),
+        #
+        #     'path_model': None,
+        #     # 'path_model': '/local/home/david/Remote/PruneFramework/exp_files/rdnet_lfw15-vgg128-rdnet-2020-01-23_11-30-03/tr02-epo010-cr0.0000-acc0.8544',
+        #     'path_model': '../exp_files/rdnet_lfw15-vgg128-rdnet-2020-05-30_19-54-26/tr00-epo070-cr0.0001-acc0.8514',
+        #
+        #
+        #     'gamma_conv': 1.,
+        #     'gamma_fc': 30.,
+        #     'kl_mult': [1.02 / 32, 1. / 32, 0,
+        #                 1. / 16, 1. / 16, 0,
+        #                 1. / 8, 1. / 8, 1. / 8, 0,
+        #                 1. / 2, 1. / 2, 1. / 2, 0,
+        #                 2., 2., 2., 0,
+        #                 0,
+        #                 1.5, 1.],
+        #     'plan_retrain': [
+        #         # {'kl_factor': 1.2e-5,
+        #         #  'train': [{'n_epochs': 70, 'lr': 0.01, 'type': 'normal', 'save_clean': False}]},
+        #         {'kl_factor': 1e-6,
+        #          'train': [{'n_epochs': 10, 'lr': 0.01, 'type': 'normal', 'save_clean': False}]},
+        #         {'kl_factor': 1e-7,
+        #          'train': [{'n_epochs': 10, 'lr': 0.001, 'type': 'normal', 'save_clean': False}]},
+        #         {'kl_factor': 1e-7,
+        #          'train': [{'n_epochs': 10, 'lr': 0.0005, 'type': 'normal', 'save_clean': False}]},
+        #         {'kl_factor': 1e-7,
+        #          'train': [{'n_epochs': 10, 'lr': 0.0001, 'type': 'normal', 'save_clean': False}]},
+        #         # {'kl_factor': 1e-7,
+        #         #  'train': [{'n_epochs': 10, 'lr': 0.001, 'type': 'individual', 'save_clean': False}]},
+        #         # {'kl_factor': 1e-7,
+        #         #  'train': [{'n_epochs': 10, 'lr': 0.0001, 'type': 'individual', 'save_clean': False}]},
+        #     ]
+        # }
     ]
 
     task_lfw15_ab = [
@@ -186,9 +203,9 @@ if __name__ == '__main__':
             'task_name': 'rdnet_lfw15_ab',
             'model_name': 'vgg128',
             'data_name': 'lfw',
-            'path_cluster_res': None,
-            'cluster_conv': 0.05,
-            'cluster_fc': 0.05,
+            'path_cluster_res': '../exp_files/rdnet_lfw15_ab-vgg128-rdnet-2020-05-24_03-52-47/cluster_results/cluster_result_threshold-{conv: 2.0, fc: 5.0}',
+            'cluster_conv': 2.,
+            'cluster_fc': 5.,
             'cluster_layer_range': np.arange(7, 15).tolist(),
 
             'path_model': None,
@@ -204,10 +221,11 @@ if __name__ == '__main__':
                         1., 1.],
             'plan_retrain': [
                 {'kl_factor': 1e-5,
-                 'train': [{'n_epochs': 0, 'lr': 0.01, 'type': 'normal', 'save_clean': True}]},
+                 'train': [{'n_epochs': 30, 'lr': 0.01, 'type': 'normal', 'save_clean': False}]},
                 {'kl_factor': 1e-6,
-                 'train': [{'n_epochs': 0, 'lr': 0.001, 'type': 'individual', 'save_clean': True}]}
-            ]
+                 'train': [{'n_epochs': 10, 'lr': 0.001, 'type': 'individual', 'save_clean': False}]}
+            ],
+            'suffix': 'imbalance'
         }
     ]
 
@@ -471,44 +489,52 @@ if __name__ == '__main__':
                         1. / 2, 1. / 2, 1. / 2, 0,
                         1., 1., 1., 0,
                         0,
-                        1., 1.], 
+                        1., 1.],
             'plan_retrain': [
                 {'kl_factor': 1e-5,
                  'train': [{'n_epochs': 30, 'lr': 0.01, 'type': 'normal', 'save_clean': False}]},
-                {'kl_factor': 1e-6,
+                {'kl_factor': 1e-7,
                  'train': [{'n_epochs': 10, 'lr': 0.001, 'type': 'normal', 'save_clean': False}]}
             ],
             'suffix': 'baseline2'
         },
         # rdnet celeba
-        # {
-        #     'task_name': 'rdnet_celeba',
-        #     'model_name': 'vgg512',
-        #     'data_name': 'celeba',
-        #
-        #     'cluster_conv': 0.1,
-        #     'cluster_fc': 1.9,
-        #     'cluster_layer_range': np.arange(13, 15).tolist(),
-        #
-        #     'gamma_conv': 1.,
-        #     'gamma_fc': 9,
-        #     'kl_mult': [0.8 / 32, 0.8 / 32, 0,
-        #                 1. / 16, 1. / 16, 0,
-        #                 1. / 8, 1. / 8, 1. / 8, 0,
-        #                 1. / 2, 1. / 2, 1. / 2, 0,
-        #                 2., 2., 2., 0,
-        #                 0,
-        #                 1., 1.],
-        #     'plan_retrain': [
-        #         {'kl_factor': 1e-5,
-        #          'train': [{'n_epochs': 30, 'lr': 0.01, 'type': 'normal', 'save_clean': False}]},
-        #         {'kl_factor': 1e-6,
-        #          'train': [{'n_epochs': 10, 'lr': 0.001, 'type': 'normal', 'save_clean': False}]}
-        #     ]
-        # }
+        {
+            'task_name': 'rdnet_celeba',
+            'model_name': 'vgg512',
+            'data_name': 'celeba',
+
+            'cluster_conv': 8.13,
+            'cluster_fc': 8.6,
+            'cluster_layer_range': np.arange(9, 15).tolist(),
+
+            'path_cluster_res': '../exp_files/cluster_res_celeba_vgg512',
+
+            # 'path_model': '../exp_files/rdnet_celeba-vgg512-rdnet-2020-05-29_05-35-12/tr00-epo030-cr0.0003-acc0.8772',
+
+            'gamma_conv': 1.,
+            'gamma_fc': 9,
+            'kl_mult': [0.8 / 32, 0.8 / 32, 0,
+                        1. / 16, 1. / 16, 0,
+                        1. / 8, 1. / 8, 1. / 8, 0,
+                        1. / 2, 1. / 2, 1. / 2, 0,
+                        2., 2., 2., 0,
+                        0,
+                        1., 1.],
+            'plan_retrain': [
+                {'kl_factor': 0.9e-5,
+                 'train': [{'n_epochs': 30, 'lr': 0.01, 'type': 'normal', 'save_clean': False}]},
+                {'kl_factor': 1e-7,
+                 'train': [{'n_epochs': 20, 'lr': 0.01, 'type': 'normal', 'save_clean': False}]},
+                {'kl_factor': 1e-7,
+                 'train': [{'n_epochs': 10, 'lr': 0.005, 'type': 'normal', 'save_clean': False}]},
+                {'kl_factor': 1e-7,
+                 'train': [{'n_epochs': 10, 'lr': 0.001, 'type': 'normal', 'save_clean': False}]}
+            ]
+        }
     ]
 
-    for task in task_celeba:
+    for task in [task_lfw15[0]]:
         print(str(task))
 
         pruning(

@@ -5,21 +5,19 @@
 
 @version: 1.0
 @license: Apache Licence
-@file: vgg_triple
-@time: 2019-09-18 14:05
+@file: model_combined_gate
+@time: 2020/5/5 11:57 上午
 
-Description. 
+Description.
 """
 
 from models.base_model import BaseModel
-from layers.conv_layer import ConvLayer
-from layers.fc_layer import FullConnectedLayer
-from layers.ib_layer import InformationBottleneckLayer
+from layers.conv_gate_layer import ConvLayer
+from layers.fc_gate_layer import FullConnectedLayer
 from utils.logger import *
 from utils.json import read_i
 from utils.json import read_l
 from utils.json import read_s
-from utils.json import read_f
 
 import numpy as np
 import pickle
@@ -55,16 +53,14 @@ class Model_Combined(BaseModel):
         self.signal_dict = signal_dict
         self.cluster_res_dict = self.pro(cluster_res_dict)
 
-        if self.pruning:
-            self.kl_total_list = None
-            self.kl_total = None
-
         self.op_logits_list = None
         self.op_opt_list = None
         self.op_acc_list = None
 
         self.op_loss_func_list = None
-        self.op_loss_kl_list = None
+
+        # Gate
+        self.scores = None
 
         self.load_dataset()
 
@@ -80,10 +76,6 @@ class Model_Combined(BaseModel):
             log_t('Initialize weight matrix from weight lists')
             self.weight_dict = self.init_weights(weight_list)
             self.initial_weight = True
-
-        if self.pruning and self.structure[0] + '_vib/CEN/mu' not in self.weight_dict.keys():
-            log_t('Initialize VIBNet params')
-            self.weight_dict = dict(self.weight_dict, **self.init_weights_vib())
 
         self.init_labels()
         self.build()
@@ -125,6 +117,18 @@ class Model_Combined(BaseModel):
             self.Y_list.append(np.arange(index_s, index_s + len(labels)).tolist())
             self.n_classes_list.append(len(labels))
             index_s = index_s + len(labels)
+
+    def score(self):
+        with tf.name_scope('score'):
+            self.scores = dict()
+            # 需要把最后一层所有的输出部分排除出去
+            for layer in self.layers:
+                if self.structure[-1] not in layer.layer_name:
+                    gra = tf.gradients(self.op_loss, layer.gate)[0]
+                    if gra is None:
+                        self.scores[layer.layer_name] = tf.zeros_like(layer.gate, dtype=tf.float32)
+                    else:
+                        self.scores[layer.layer_name] = tf.abs(gra)
 
     def init_weights(self, weight_list):
         def get_signal(layer_name, task_index):
@@ -221,29 +225,6 @@ class Model_Combined(BaseModel):
 
         return weight_dict
 
-    def init_weights_vib(self):
-        weight_dict = dict()
-        for layer_index, layer_name in enumerate([_ for _ in self.structure if _ not in ['p', 'fla']]):
-            # The number of neurons
-            num_list = [len(self.cluster_res_dict[layer_name][t2c(task_index)]) for task_index in range(self.n_tasks)]
-            num_list.append(len(self.cluster_res_dict[layer_name]['CEN']))
-
-            for task_index in range(-1, self.n_tasks):
-                num = num_list[task_index]
-                if num != 0:
-                    weight_dict['%s_vib/%s/mu' % (layer_name, t2c(task_index))] = np.random.normal(loc=1,
-                                                                                                   scale=0.01,
-                                                                                                   size=[
-                                                                                                       num]).astype(
-                        np.float32)
-
-                    weight_dict['%s_vib/%s/logD' % (layer_name, t2c(task_index))] = np.random.normal(loc=-9,
-                                                                                                     scale=0.01,
-                                                                                                     size=[
-                                                                                                         num]).astype(
-                        np.float32)
-        return weight_dict
-
     def inference(self):
         """
         build the model of VGG_Combine
@@ -253,53 +234,20 @@ class Model_Combined(BaseModel):
         def get_signal(layer_name, key):
             return self.signal_dict[layer_name][key]
 
-        def get_ib(y, layer_type, kl_mult, partition_name):
-            if self.pruning:
-                if layer_type == 'C_vib':
-                    name = 'conv'
-                elif layer_type == 'F_vib':
-                    name = 'fc'
-
-                mask_threshold = read_f(self.cfg, 'pruning', 'ib_threshold_' + name)
-                gamma = read_f(self.cfg, 'pruning', 'gamma_' + name)
-
-                # TODO: 为了保留exclusive部分
-                if partition_name != 'CEN' and name == 'fc':
-                    gamma = 0
-                elif name == 'conv' and partition_name != 'CEN':
-                    gamma = 0
-
-                ib_layer = InformationBottleneckLayer(y, layer_type=layer_type, weight_dict=self.weight_dict,
-                                                      is_training=self.is_training, kl_mult=kl_mult * gamma,
-                                                      mask_threshold=mask_threshold)
-
-                self.layers.append(ib_layer)
-                y, ib_kld = ib_layer.layer_output
-                self.kl_total += ib_kld
-
-                if partition_name == 'CEN':
-                    for i in range(self.n_tasks):
-                        self.kl_total_list[i] += ib_kld
-                else:
-                    self.kl_total_list[c2t(partition_name)] += ib_kld
-            return y
-
-        def create_conv_and_ib(input, layer_name, part_name, kl_mult):
+        def create_conv_and_ib(input, layer_name, part_name):
             if get_signal(layer_name, part_name):
                 while None in input:
                     input.remove(None)
                 with tf.variable_scope('%s/%s' % (layer_name, part_name)):
                     conv_layer = ConvLayer(tf.concat(input, axis=-1), self.weight_dict, is_dropout=False,
-                                           is_training=self.is_training, is_musked=self.is_musked,
-                                           regularizer_conv=self.regularizer_conv)
+                                           is_training=self.is_training, regularizer_conv=self.regularizer_conv)
                     self.layers.append(conv_layer)
                     y = tf.nn.relu(conv_layer.layer_output)
-                with tf.variable_scope('%s_vib/%s' % (layer_name, part_name)):
-                    return get_ib(y, 'C_vib', kl_mult, part_name)
+                    return y
             else:
                 return None
 
-        def create_fc_and_ib(input, layer_name, part_name, kl_mult):
+        def create_fc_and_ib(input, layer_name, part_name):
             if get_signal(layer_name, part_name):
                 while None in input:
                     input.remove(None)
@@ -308,8 +256,7 @@ class Model_Combined(BaseModel):
                                                   regularizer_fc=self.regularizer_fc)
                     self.layers.append(fc_layer)
                     y = tf.nn.relu(fc_layer.layer_output)
-                with tf.variable_scope('%s_vib/%s' % (layer_name, part_name)):
-                    return get_ib(y, 'F_vib', kl_mult, part_name)
+                    return y
             else:
                 return None
 
@@ -339,33 +286,29 @@ class Model_Combined(BaseModel):
         with tf.variable_scope(self.task_name, reuse=tf.AUTO_REUSE):
             x = self.X
 
-            self.kl_total_list = [0. for _ in range(self.n_tasks)]
-            self.kl_total = 0.
-
             # 这一层没有A，则y_A=None
             output_last_list = [None for _ in range(self.n_tasks + 1)]
 
-            for layer_index, (layer_name, kl_mult) in enumerate(
-                    zip(self.structure, read_l(self.cfg, 'pruning', 'kl_mult') + [0])):
+            for layer_index, layer_name in enumerate(self.structure):
                 if layer_name.startswith('c'):
                     if layer_index == 0:
-                        output_list = [create_conv_and_ib([x], layer_name, t2c(task_index), kl_mult) for task_index in
+                        output_list = [create_conv_and_ib([x], layer_name, t2c(task_index)) for task_index in
                                        range(self.n_tasks)]
                         # CEN
-                        output_list.append(create_conv_and_ib([x], layer_name, 'CEN', kl_mult))
+                        output_list.append(create_conv_and_ib([x], layer_name, 'CEN'))
                     else:
                         output_list = [
                             create_conv_and_ib([output_last_list[task_index], output_last_list[-1]], layer_name,
-                                               t2c(task_index), kl_mult) for task_index in range(self.n_tasks)]
+                                               t2c(task_index)) for task_index in range(self.n_tasks)]
                         # CEN
-                        output_list.append(create_conv_and_ib([output_last_list[-1]], layer_name, 'CEN', kl_mult))
+                        output_list.append(create_conv_and_ib([output_last_list[-1]], layer_name, 'CEN'))
                 elif layer_name.startswith('f') and layer_name != 'fla':
                     if layer_index != len(self.structure) - 1:
                         output_list = [
                             create_fc_and_ib([output_last_list[task_index], output_last_list[-1]], layer_name,
-                                             t2c(task_index), kl_mult) for task_index in range(self.n_tasks)]
+                                             t2c(task_index)) for task_index in range(self.n_tasks)]
                         # CEN
-                        output_list.append(create_fc_and_ib([output_last_list[-1]], layer_name, 'CEN', kl_mult))
+                        output_list.append(create_fc_and_ib([output_last_list[-1]], layer_name, 'CEN'))
                     else:
                         output_list = [create_output([output_last_list[task_index], output_last_list[-1]], layer_name,
                                                      t2c(task_index)) for task_index in range(self.n_tasks)]
@@ -380,36 +323,16 @@ class Model_Combined(BaseModel):
             self.op_logits = tf.nn.tanh(tf.concat(output_list, axis=1))
 
     def loss(self):
+        # normal func loss
+        self.op_loss_func = tf.losses.mean_squared_error(labels=self.Y, predictions=self.op_logits)
         self.op_loss_func_list = [tf.losses.mean_squared_error(labels=tf.gather(self.Y, self.Y_list[ind], axis=-1),
                                                                predictions=self.op_logits_list[ind]) for ind in
                                   range(self.n_tasks)]
 
-        # normal func loss
-        # 正产情况：
-        self.op_loss_func = tf.losses.mean_squared_error(labels=self.Y, predictions=self.op_logits)
-        # TODO: ab task存在包含关系时
-        # self.op_loss_func = tf.reduce_sum(self.op_loss_func_list)
-        # self.op_loss_func = self.op_loss_func_list[1]
-
-        # 这里是为了scenario2做测试来用的
-        # self.op_loss_func_list = [tf.losses.mean_squared_error(labels=tf.gather(self.Y, self.Y_list[ind], axis=-1),
-        #                                                        predictions=self.op_logits_list[ind]) for ind in
-        #                           range(self.n_tasks)]
-        # self.op_loss_func = 0.05 * self.op_loss_func_list[0]+self.op_loss_func_list[1]
-
         # Notice: l2 loss没有分任务，建议不要使用
         self.op_loss_regu = tf.losses.get_regularization_loss()
-
-        if self.pruning:
-            self.op_loss_kl = self.kl_factor * self.kl_total
-            self.op_loss_kl_list = [self.kl_factor * self.kl_total_list[ind] for ind in range(self.n_tasks)]
-
-            self.op_loss = self.op_loss_func + self.op_loss_regu + self.op_loss_kl
-            self.op_loss_list = [self.op_loss_func_list[ind] + self.op_loss_regu + self.op_loss_kl_list[ind] for ind in
-                                 range(self.n_tasks)]
-        else:
-            self.op_loss = self.op_loss_func + self.op_loss_regu
-            self.op_loss_list = [self.op_loss_func_list[ind] + self.op_loss_regu for ind in range(self.n_tasks)]
+        self.op_loss = self.op_loss_func + self.op_loss_regu
+        self.op_loss_list = [self.op_loss_func_list[ind] + self.op_loss_regu for ind in range(self.n_tasks)]
 
     def optimize(self, lr):
         def get_opt(type):
@@ -429,61 +352,49 @@ class Model_Combined(BaseModel):
 
     def evaluate(self):
         with tf.name_scope('predict'):
+            correct_preds = tf.reduce_sum(tf.cast(tf.equal(self.Y, tf.sign(self.op_logits)), tf.float32))
             correct_preds_list = [tf.reduce_sum(
                 tf.cast(tf.equal(tf.gather(self.Y, self.Y_list[ind], axis=-1), tf.sign(self.op_logits_list[ind])),
                         tf.float32)) for ind
                 in range(self.n_tasks)]
 
-            # 正常
-            correct_preds = tf.reduce_sum(tf.cast(tf.equal(self.Y, tf.sign(self.op_logits)), tf.float32))
-            # TODO: 为了imbalance
-            # correct_preds = tf.reduce_mean(correct_preds_list)
-
             self.op_acc = correct_preds / tf.cast(tf.shape(self.Y)[1], tf.float32)
             self.op_acc_list = [correct_preds_list[ind] / len(self.Y_list[ind]) for ind in range(self.n_tasks)]
-
-    def set_kl_factor(self, kl_factor):
-        log_l('kl_factor: %f' % kl_factor)
-        self.kl_factor = kl_factor
-        self.loss()
 
     def build(self):
         self.inference()
         self.loss()
         self.evaluate()
+        self.loss()
+        self.score()
 
-    def train_one_epoch(self, sess, init, epoch):
+    def train_one_epoch(self, sess, init, epoch, N=10):
         sess.run(init)
 
         avg_loss = 0
-        avg_loss_func = 0
-        avg_loss_kl = 0
         n_batches = 0
 
         time_last = time.time()
-        try:
-            while True:
-                if self.pruning:
-                    _, loss, loss_func, loss_kl = sess.run(
-                        [self.op_opt, self.op_loss, self.op_loss_func, self.op_loss_kl],
-                        feed_dict={self.is_training: True})
 
-                    avg_loss_func += (loss_func - avg_loss_func) / (n_batches + 1.)
-                    avg_loss_kl += (loss_kl - avg_loss_kl) / (n_batches + 1.)
-                else:
-                    _, loss = sess.run([self.op_opt, self.op_loss], feed_dict={self.is_training: True})
+        dict_ = [v for k, v in self.scores.items()]
+        score_avg = [0 for _ in range(len(dict_))]
+
+        try:
+            while n_batches < N:
+                _, loss, score = sess.run([self.op_opt, self.op_loss] + [dict_], feed_dict={self.is_training: True})
 
                 avg_loss += (loss - avg_loss) / (n_batches + 1.)
                 n_batches += 1
 
+                for ind, s in enumerate(score):
+                    score_avg[ind] += (s - score_avg[ind]) / n_batches
+
                 if n_batches % 5 == 0:
-                    str_ = 'epoch={:d}, batch={:d}/{:d}, curr_loss={:.4f}, curr_loss_func={:.4f}, curr_loss_kl={:.4f}, used_time:{:.2f}s'.format(
+                    str_ = 'epoch={:d}, batch={:d}/{:d}, curr_loss={:.4f}, used_time:{:.2f}s'.format(
                         epoch + 1,
                         n_batches,
                         self.total_batches_train,
                         avg_loss,
-                        avg_loss_func,
-                        avg_loss_kl,
                         time.time() - time_last)
 
                     print('\r' + str_, end=' ')
@@ -493,6 +404,8 @@ class Model_Combined(BaseModel):
             pass
 
         log(str_, need_print=False)
+
+        return score_avg
 
     def fetch_weight(self, sess):
         """
@@ -513,8 +426,6 @@ class Model_Combined(BaseModel):
         sess.run(init)
 
         avg_loss = 0
-        avg_loss_func = 0
-        avg_loss_kl = 0
 
         corr_preds = 0
         corr_preds_list = [0 for _ in range(self.n_tasks)]
@@ -523,16 +434,8 @@ class Model_Combined(BaseModel):
         time_start = time.time()
         try:
             while True:
-                if self.pruning:
-                    loss, loss_func, loss_kl, acc, acc_list = sess.run(
-                        [self.op_loss, self.op_loss_func, self.op_loss_kl, self.op_acc] + [self.op_acc_list],
-                        {self.is_training: False})
-
-                    avg_loss_kl += (loss_kl - avg_loss_kl) / (n_batches + 1.)
-                    avg_loss_func += (loss_func - avg_loss_func) / (n_batches + 1.)
-                else:
-                    loss, acc, acc_list = sess.run([self.op_loss, self.op_acc] + [self.op_acc_list],
-                                                   {self.is_training: False})
+                loss, acc, acc_list = sess.run([self.op_loss, self.op_acc] + [self.op_acc_list],
+                                               {self.is_training: False})
 
                 avg_loss += (loss - avg_loss) / (n_batches + 1.)
 
@@ -549,15 +452,9 @@ class Model_Combined(BaseModel):
         accu = corr_preds / self.n_samples_val
         accu_list = [corr_preds_list[ind] / self.n_samples_val for ind in range(self.n_tasks)]
 
-        if self.pruning:
-            str_ = 'Epoch:{:d}, val_acc={:.3%}|{:}, val_loss={:.4f}, val_loss_func={:.4f}, val_loss_kl={:.4f}, used_time:{:.2f}s'.format(
-                epoch + 1, accu, str(['{:.3%}'.format(_) for _ in accu_list]).replace('\'', ''), avg_loss,
-                avg_loss_func, avg_loss_kl,
-                time_end - time_start)
-        else:
-            str_ = 'Epoch:{:d}, val_acc={:.4%}|{:}, val_loss={:.4f}, used_time:{:.2f}s'.format(epoch + 1, accu,
-                                                                                               str(accu_list), avg_loss,
-                                                                                               time_end - time_start)
+        str_ = 'Epoch:{:d}, val_acc={:.4%}|{:}, val_loss={:.4f}, used_time:{:.2f}s'.format(epoch + 1, accu,
+                                                                                           str(accu_list), avg_loss,
+                                                                                           time_end - time_start)
 
         # 写文件
         log('\n' + str_)
@@ -591,55 +488,53 @@ class Model_Combined(BaseModel):
 
         log(str_, need_print=False)
 
-    def train(self, sess, n_epochs, lr, type='normal', save_clean=False):
+    def prune(self, sess, n_epoch, lr):
         self.optimize(lr)
 
-        save_step = read_i(self.cfg, 'train', 'save_step')
         sess.run(tf.variables_initializer(self.opt.variables()))
 
-        for epoch in range(n_epochs):
-            if type == 'normal':
-                self.train_one_epoch(sess, self.train_init, epoch)
-            elif type == 'individual':
-                self.train_one_epoch_individual(sess, self.train_init, epoch)
+        scores = self.train_one_epoch(sess, self.train_init, n_epoch)
 
-            # 为了节省时间
-            if (epoch + 1) % 2 == 0:
-                acc, acc_list = self.eval_once(sess, self.test_init, epoch)
+        # scores_con = np.sort(np.concatenate(scores))
+        scores_con = np.sort(np.concatenate([v for k, v in zip(self.scores, scores) if 'CEN' in k]))
+        threshold = scores_con[int(len(scores_con) * 0.09)]
 
-                # 只有偶数的时候才计算压缩率
-                if self.pruning and (epoch + 1) % 2 == 0:
-                    cr, cr_flops = self.get_CR(sess, self.cluster_res_dict)
+        masks = dict()
+        for k, v in zip(self.scores.keys(), scores):
+            # for lfw15
+            if 'CEN' in k:
+                masks[k] = v > threshold
+            else:
+                masks[k] = np.ones_like(v, dtype=np.bool)
 
-                if self.save_now((epoch + 1), n_epochs, save_step):
-                    if self.pruning:
-                        name = '%s/tr%.2d-epo%.3d-cr%.4f-acc%.4f' % (
-                            read_s(self.cfg, 'path', 'path_save'), self.cnt_train, epoch + 1, cr, acc)
-                    else:
-                        name = '%s/tr%.2d-epo%.3d-acc%.4f' % (
-                            read_s(self.cfg, 'path', 'path_save'), self.cnt_train, epoch + 1, acc)
+        log('')
+        cr, cr_flops = self.get_CR(masks, self.cluster_res_dict)
 
-                    self.save_weight(sess, name)
+        path = "%s/epoch%d-cr%.4f-crf%.4f" % (self.cfg['path']['path_save'], n_epoch, cr, cr_flops)
+        self.save_weight_clean(sess, masks, path)
 
-        if save_clean:
-            self.save_weight_clean(sess, '%s-CLEAN' % name)
+        return path
 
-        # Count of training
-        self.cnt_train += 1
-        # Save into cfg
-        name_train = 'train%d' % self.cnt_train
-        if not self.cfg.has_section(name_train):
-            self.cfg.add_section(name_train)
-        self.cfg.set(name_train, 'n_epochs', str(n_epochs))
-        self.cfg.set(name_train, 'lr', str(lr))
-        self.cfg.set(name_train, 'acc', str(acc))
-        self.cfg.set(name_train, 'acc_list', str(acc_list))
+    def fine(self, sess, n_epoch, lr):
+        self.optimize(lr)
 
-        if self.pruning:
-            self.cfg.set(name_train, 'cr', str(cr))
-            self.cfg.set(name_train, 'kl_factor', str(self.kl_factor))
+        sess.run(tf.variables_initializer(self.opt.variables()))
 
-    def get_CR(self, sess, cluster_res_dict):
+        scores = self.train_one_epoch(sess, self.train_init, n_epoch, N=9999999)
+
+        masks = dict()
+        for k, v in zip(self.scores.keys(), scores):
+            masks[k] = v > -1
+
+        log('')
+        cr, cr_flops = self.get_CR(masks, self.cluster_res_dict)
+
+        path = "%s/fine-epoch%d-cr%.4f-crf%.4f" % (self.cfg['path']['path_save'], n_epoch, cr, cr_flops)
+        self.save_weight_clean(sess, masks, path)
+
+        return path
+
+    def get_CR(self, masks, cluster_res_dict):
         net_origin = dict()
         for name in self.structure:
             if name.startswith('c') or name.startswith('f') and name != 'fla':
@@ -647,28 +542,12 @@ class Model_Combined(BaseModel):
                 layer.append(len(cluster_res_dict[name][t2c(-1)]))
                 net_origin[name] = layer
 
-        # 得到每一层的每个部分还有多少神经元
-
-        def get_n(name, task_index):
-            layer = self.get_layer_by_name('%s_vib/%s' % (name, t2c(task_index)))
-            if layer is None:
-                return tf.constant(0, dtype=tf.int32)
-            else:
-                if name.startswith('c'):
-                    return layer.get_remained(read_f(self.cfg, 'pruning', 'ib_threshold_conv'))
-                elif name.startswith('f'):
-                    return layer.get_remained(read_f(self.cfg, 'pruning', 'ib_threshold_fc'))
-
         net_remain = dict()
         for name in self.structure:
             if name.startswith('c') or name.startswith('f') and name != 'fla':
-                if name != self.structure[-1]:
-                    for task_index in range(self.n_tasks):
-                        layer = [get_n(name, task_index) for task_index in range(self.n_tasks)]
-                    layer.append(get_n(name, -1))
-                    net_remain[name] = sess.run(layer)
-                else:
-                    net_remain[name] = net_origin[name]
+                layer = [np.sum(masks.get(name + '/' + t2c(task_index), 0)) for task_index in range(self.n_tasks)]
+                layer.append(np.sum(masks.get(name + '/' + t2c(-1), 0)))
+                net_remain[name] = layer
 
         def count(net_dict):
             # 读入图片的大小
@@ -729,22 +608,12 @@ class Model_Combined(BaseModel):
 
         return cr, cr_flop
 
-    def save_weight_clean(self, sess, path_save):
-        # Obtain masks
-        masks_tf, names = list(), list()
-        for layer in self.layers:
-            if layer.layer_type == 'C_vib':
-                masks_tf.append(layer.get_mask(read_f(self.cfg, 'pruning', 'ib_threshold_conv'), dtype=tf.bool))
-                names.append(layer.layer_name)
-            elif layer.layer_type == 'F_vib':
-                masks_tf.append(layer.get_mask(read_f(self.cfg, 'pruning', 'ib_threshold_fc'), dtype=tf.bool))
-                names.append(layer.layer_name)
-
-        masks = sess.run(masks_tf)
-        masks_dict = dict(zip(names, [_.tolist() for _ in masks]))
+    def save_weight_clean(self, sess, masks, path_save):
+        masks_dict = masks
 
         def rm_none(list_):
-            while None in list_:
+            # return list_
+            while np.any([_ is None for _ in list_]):
                 list_.remove(None)
             return list_
 
@@ -764,15 +633,14 @@ class Model_Combined(BaseModel):
                         mask_input = np.ones(read_i(self.cfg, 'data', 'channels'), dtype=np.bool)
                     else:
                         mask_input = np.concatenate(rm_none(
-                            [masks_dict.get('%s_vib/%s' % (name_last, t2c(_)), None) for _ in set([task_index, -1])]))
+                            [masks_dict.get('%s/%s' % (name_last, t2c(_)), None) for _ in set([task_index, -1])]))
 
                         if flatten:
                             mask_input = np.concatenate([mask_input for _ in range(h * w)], axis=0)
 
                     # 不是最后一层
                     if ind != len(self.structure) - 1:
-
-                        mask_output = masks_dict.get('%s_vib/%s' % (name, t2c(task_index)))
+                        mask_output = masks_dict.get('%s/%s' % (name, t2c(task_index)))
 
                         # Mask
                         weight_dict['%s/%s/w' % (name, t2c(task_index))] = \
@@ -780,18 +648,11 @@ class Model_Combined(BaseModel):
                         weight_dict['%s/%s/b' % (name, t2c(task_index))] = \
                             weight_dict['%s/%s/b' % (name, t2c(task_index))][
                                 mask_output]
-                        # 输出层没有vib层
-
-                        weight_dict['%s_vib/%s/mu' % (name, t2c(task_index))] = \
-                            weight_dict['%s_vib/%s/mu' % (name, t2c(task_index))][mask_output]
-                        weight_dict['%s_vib/%s/logD' % (name, t2c(task_index))] = \
-                            weight_dict['%s_vib/%s/logD' % (name, t2c(task_index))][mask_output]
                     else:
                         # 最后一层
                         weight_dict['%s/%s/w' % (name, t2c(task_index))] = weight_dict[
                                                                                '%s/%s/w' % (name, t2c(task_index))][...,
                                                                            mask_input, :]
-
                 flatten = False
                 name_last = name
             elif name == 'fla':
