@@ -110,7 +110,10 @@ class BaseModel:
             self.cfg.write(file)
 
     def save_now(self, epoch, n_epoch, save_step):
-        return save_step == -1 and epoch == n_epoch or save_step != -1 and epoch % save_step == 0
+        if save_step == -2:
+            return False
+        else:
+            return save_step == -1 and epoch == n_epoch or save_step != -1 and epoch % save_step == 0
 
     @abstractmethod
     def init_saver(self):
