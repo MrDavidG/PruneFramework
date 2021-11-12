@@ -516,7 +516,7 @@ def exp(model_name, data_name, task_name, pruning, pruning_set, save_step, plan_
     model.build()
 
     # summary
-    writer = tf.summary.FileWriter('../logs', sess.graph)
+    # writer = tf.summary.FileWriter('../logs', sess.graph)
 
     sess.run(tf.global_variables_initializer())
 

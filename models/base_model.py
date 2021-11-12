@@ -53,6 +53,8 @@ class BaseModel:
             self.kernel_size = read_l(config, 'model', 'kernel_size')
         else:
             self.kernel_size = [3, 3]
+        if config.has_option('model', 'stride'):
+            self.stride = read_l(config, 'model', 'stride')
 
         # VIBNet
         self.kl_total = 0

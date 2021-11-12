@@ -15,30 +15,41 @@ import tensorflow as tf
 
 
 class BatchNormalizeLayer(BaseLayer):
-    def __init__(self, x, weight_dict=None, regularizer_conv=None, is_training=False):
+    def __init__(self, x, name=None, weight_dict=None, is_training=False):
         super(BatchNormalizeLayer, self).__init__()
-        self.create(x, weight_dict, regularizer_conv, is_training)
+        self.create(x, name, weight_dict, is_training)
 
-    def create(self, x, weight_dict=None, regularizer_conv=None, is_training=False):
+    def create(self, x, name=None, weight_dict=None, is_training=False):
         self.layer_input = x
 
-        beta, mean, variance = self.get_bn_param(weight_dict)
+        beta, gamma = self.get_bn_param(name, weight_dict)
 
-        bn = tf.layers.batch_normalization(x, momentum=0.1, epsilon=1e-05, training=is_training,
-                                           beta_initializer=beta, scale=False, moving_mean_initializer=mean,
-                                           moving_variance_initializer=variance,
-                                           beta_regularizer=regularizer_conv)
-
-        self.weight_tensors = [tf.get_variable('batch_normalization/beta'),
-                               tf.get_variable('batch_normalization/moving_mean'),
-                               tf.get_variable('batch_normalization/moving_variance')]
+        bn = tf.layers.batch_normalization(
+            x, momentum=0.1, epsilon=1e-05, training=is_training,
+            beta_initializer=beta,
+            name=name,
+            gamma_initializer=gamma
+            # moving_mean_initializer=mean,
+            # moving_variance_initializer=variance
+        )
+        # bn = tf.nn.batch_normalization(x, mean=mean, variance=variance, offset=beta, scale=gamma,
+        #                                variance_epsilon=1e-05)
+        # self.weight_tensors = [beta, gamma], mean, variance]
 
         self.layer_output = bn
-        return self.layer_output
 
-    def get_bn_param(self, weight_dict):
-        beta = tf.constant_initializer(weight_dict[self.layer_name + '/batch_normalization/beta'])
-        mean = tf.constant_initializer(weight_dict[self.layer_name + '/batch_normalization/moving_mean'])
-        variance = tf.constant_initializer(weight_dict[self.layer_name + '/batch_normalization/moving_variance'])
+    def get_bn_param(self, name, weight_dict):
+        # beta = tf.get_variable(name='beta', initializer=weight_dict[self.layer_name + '/beta'], trainable=False)
+        # gamma = tf.get_variable(name='gamma', initializer=weight_dict[self.layer_name + '/gamma'], trainable=False)
+        # mean = tf.get_variable(name='mean', initializer=weight_dict[self.layer_name + '/mean'], trainable=False)
+        # variance = tf.get_variable(name='var', initializer=weight_dict[self.layer_name + '/var'], trainable=False)
+        if self.layer_name == '':
+            beta = tf.constant_initializer(weight_dict['%s/beta' % name])
+            gamma = tf.constant_initializer(weight_dict['%s/gamma' % name])
+        else:
+            beta = tf.constant_initializer(weight_dict[self.layer_name + '/%s/beta' % name])
+            gamma = tf.constant_initializer(weight_dict[self.layer_name + '/%s/gamma' % name])
+        # mean = tf.constant_initializer(weight_dict[self.layer_name + '/mean'])
+        # variance = tf.constant_initializer(weight_dict[self.layer_name + '/var'])
 
-        return beta, mean, variance
+        return beta, gamma  # , mean, variance

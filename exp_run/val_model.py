@@ -25,19 +25,13 @@ import os
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-# gpu 0
-# os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4eec6600-f5e3-f385-9b14-850ae9a2b236'
-
-# gpu 1
-os.environ["CUDA_VISIBLE_DEVICES"] = 'GPU-4b0856cd-c698-63a2-0b6e-9a33d380f9c4'
-
 
 def val_model(path_model):
     cfg = load_cfg('/'.join(path_model.split('/')[:-1]) + '/cfg.ini')
 
     cfg.set('path', 'path_load', path_model)
 
-    # 不写入log
+    # not record
     logger.record_log = False
 
     gpu_config = tf.ConfigProto(allow_soft_placement=True)
@@ -56,12 +50,7 @@ def val_model(path_model):
 
 if __name__ == '__main__':
     path_models = [
-        # vib_a
-        # '/local/home/david/Remote/PruneFramework/exp_files/fashionmnist_a-lenet5-vib-2019-12-09_12-34-31/tr01-epo010-cr0.0447-fl0.1177-acc0.9590',
-        # vib_b
-        # '/local/home/david/Remote/PruneFramework/exp_files/fashionmnist_b-lenet5-vib-2019-12-10_15-21-57/tr01-epo010-cr0.0306-fl0.0336-acc0.9625',
-
-        '/local/home/david/Remote/PruneFramework/exp_files/lfw15_4-vgg128-vib-2019-12-13_09-14-19/tr01-epo010-cr0.0008-fl0.0016-acc0.8661'
+        ''
     ]
 
     for path in path_models:

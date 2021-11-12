@@ -12,6 +12,7 @@ Description.
 from layers.base_layer import BaseLayer
 
 import tensorflow as tf
+import numpy as np
 
 
 class ConvLayer(BaseLayer):
@@ -56,5 +57,12 @@ class ConvLayer(BaseLayer):
         biases = tf.get_variable(name="b", initializer=weight_dict[self.layer_name + '/b'],
                                  regularizer=regularizer_conv, trainable=trainable)
 
-        gate = tf.ones_like(biases, dtype=tf.float32, name="g")
+        if self.layer_name + '/g' in weight_dict.keys():
+            gate = tf.get_variable(name="g", initializer=weight_dict[self.layer_name + '/g'], trainable=False)
+        else:
+            # print('Init gate for %s ...' % self.layer_name)
+            gate = tf.get_variable(name="g",
+                                   initializer=np.ones_like(weight_dict[self.layer_name + '/b'], dtype=np.float32),
+                                   trainable=False)
+        # gate = tf.ones_like(biases, dtype=tf.float32, name="g", trainable=True)
         return filt, biases, gate
